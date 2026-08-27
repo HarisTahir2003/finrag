@@ -41,6 +41,11 @@ AGENT_COLUMNS = (
     ("answered_with_figures", "gave figures"),
     ("errors", "errors"),
 )
+
+# Metrics rendered as "n of total" rather than a bare count. `errors 6` reads
+# very differently depending on whether the suite had 6 cases or 20, and the
+# table never showed which.
+AGENT_COUNT_OF = {"errors": "cases", "malformed_tool_calls": "cases"}
 RAGAS_COLUMNS = (
     ("ragas_faithfulness", "faithful"),
     ("ragas_answer_relevancy", "relevancy"),
@@ -147,7 +152,18 @@ class ComparisonReport:
                     # "this metric was never collected".
                     cells.append("n/a" if isinstance(raw, float) else "—")
                 elif isinstance(raw, int) and not isinstance(raw, bool):
-                    cells.append(str(raw))
+                    total = r.score(AGENT_COUNT_OF[key]) if key in AGENT_COUNT_OF else None
+                    if total:
+                        historic = r.score("errors_all_attempts")
+                        # Disclose earlier failures a resume would otherwise hide.
+                        extra = (
+                            f" ({int(historic)} all attempts)"
+                            if key == "errors" and historic and historic > raw
+                            else ""
+                        )
+                        cells.append(f"{raw} of {int(total)}{extra}")
+                    else:
+                        cells.append(str(raw))
                 else:
                     cells.append(f"{value:.0%}" if 0 <= value <= 1 else f"{value:.3f}")
             lines.append(

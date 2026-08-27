@@ -111,6 +111,12 @@ class AgentCaseResult:
 @dataclass
 class AgentReport:
     results: list[AgentCaseResult] = field(default_factory=list)
+    # Failures across every attempt that wrote to this run's checkpoint, and
+    # how many attempts that was. Reported because `errors` alone counts only
+    # the current attempt: resume a quota-starved run until it completes and it
+    # would otherwise publish a clean sheet.
+    historic_errors: int = 0
+    attempts: int = 1
 
     def _rate(self, predicate) -> float:
         return sum(predicate(r) for r in self.results) / len(self.results) if self.results else 0.0
@@ -126,6 +132,10 @@ class AgentReport:
             "gave_up": round(self._rate(lambda r: r.gave_up), 4),
             "malformed_tool_calls": sum(r.malformed_tool_calls for r in self.results),
             "errors": sum(1 for r in self.results if r.error),
+            "errors_all_attempts": max(
+                self.historic_errors, sum(1 for r in self.results if r.error)
+            ),
+            "attempts": self.attempts,
             "cases": len(self.results),
         }
 
@@ -181,6 +191,7 @@ def evaluate_agent(
 
     checkpoint = Checkpoint(checkpoint_path)
     pending = [c for c in cases if checkpoint.completed(c.id) is None]
+    report = AgentReport(historic_errors=checkpoint.historic_errors, attempts=checkpoint.attempts)
 
     if agent is None and pending:
         from ..agent import build_agent
@@ -188,7 +199,6 @@ def evaluate_agent(
 
         agent = build_agent(store=store or open_store(settings), settings=settings)
 
-    report = AgentReport()
     for case in cases:
         done = checkpoint.completed(case.id)
         if done is not None:
@@ -216,11 +226,14 @@ def evaluate_agent(
             log.error("%s: %s", case.id, exc)
             result = AgentCaseResult(case=case, answer="", error=str(exc))
         report.results.append(result)
-        # Failed cases are deliberately not checkpointed: on a free tier the
-        # error is usually the quota, and the point of resuming is to retry.
+        # A failed case is recorded but not marked done: it retries on the next
+        # attempt, while its failure still counts toward errors_all_attempts.
         if result.error is None:
             checkpoint.record(
                 case.id, {"answer": result.answer, "tools_called": result.tools_called}
             )
+        else:
+            checkpoint.record_failure(case.id, result.error)
+            report.historic_errors = checkpoint.historic_errors
         log.info("%-28s tools=%s", case.id, result.tools_called or "none")
     return report

@@ -225,7 +225,13 @@ def test_agent_eval_resumes_without_repeating_calls(tmp_path):
     report = evaluate_agent(cases=cases, agent=first, checkpoint_path=path)
     assert first.calls == 4
     assert sum(1 for r in report.results if r.error) == 2
-    assert len(path.read_text().splitlines()) == 2, "failed cases must not be checkpointed"
+
+    # Failures are written down but never marked complete: they retry on the
+    # next attempt, while their count survives so a resumed run cannot go on to
+    # report a clean sheet.
+    lines = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    assert sum(1 for line in lines if not line.get("error")) == 2, "2 successes recorded"
+    assert sum(1 for line in lines if line.get("error")) == 2, "2 failures recorded"
 
     # Resumed run: only the two unfinished cases reach the agent.
     second = CountingAgent()
@@ -233,6 +239,7 @@ def test_agent_eval_resumes_without_repeating_calls(tmp_path):
     assert second.calls == 2
     assert len(report.results) == 4
     assert not any(r.error for r in report.results)
+    assert report.as_metrics()["errors_all_attempts"] == 2
 
 
 # ---- response cache ---------------------------------------------------------

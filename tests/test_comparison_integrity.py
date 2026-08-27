@@ -386,3 +386,126 @@ def test_reindexing_with_new_chunking_replaces_the_old(monkeypatch, tmp_path):
     index_filings(paths=paths, settings=fine)
     assert collection_size(fine) == n_fine, "identical re-run must be idempotent"
     assert n_fine != n_coarse + n_fine, "the coarse chunking was left behind"
+
+
+# ---- resume must not launder away earlier failures --------------------------
+
+
+class FlakyAgent:
+    def __init__(self, fail_after=None):
+        self.calls = 0
+        self.fail_after = fail_after
+
+    def invoke(self, _):
+        self.calls += 1
+        if self.fail_after is not None and self.calls > self.fail_after:
+            raise RuntimeError("429 daily quota exhausted")
+        return {"output": "0.988", "intermediate_steps": []}
+
+
+def test_resume_still_discloses_earlier_failures(tmp_path):
+    """`errors` counts only the current attempt. Resume a quota-starved run
+    until it completes and it would otherwise publish a clean sheet -- and since
+    you retry the flaky free tiers and run the reliable ones once, the column
+    ended up reading backwards."""
+    from finrag.eval.agent_eval import evaluate_agent
+
+    cases = [
+        AgentCase(id=f"c{i}", question=f"q{i}", ticker="AAPL", fiscal_year=2023) for i in range(4)
+    ]
+    path = tmp_path / "cases.jsonl"
+
+    first = evaluate_agent(cases=cases, agent=FlakyAgent(fail_after=2), checkpoint_path=path)
+    assert first.as_metrics()["errors"] == 2
+
+    second = evaluate_agent(cases=cases, agent=FlakyAgent(), checkpoint_path=path).as_metrics()
+    assert second["errors"] == 0, "this attempt genuinely had none"
+    assert second["errors_all_attempts"] == 2, "but the run took two attempts to get there"
+    assert second["attempts"] == 2
+
+
+def test_failed_cases_are_retried_not_frozen(tmp_path):
+    """Recording a failure must not mark the case done."""
+    from finrag.eval.agent_eval import evaluate_agent
+
+    cases = [
+        AgentCase(id=f"c{i}", question=f"q{i}", ticker="AAPL", fiscal_year=2023) for i in range(3)
+    ]
+    path = tmp_path / "cases.jsonl"
+    evaluate_agent(cases=cases, agent=FlakyAgent(fail_after=1), checkpoint_path=path)
+
+    second = FlakyAgent()
+    evaluate_agent(cases=cases, agent=second, checkpoint_path=path)
+    assert second.calls == 2, "the two failures must run again, the success must not"
+
+
+def test_error_count_is_shown_with_its_denominator():
+    """`errors 6` reads very differently against 6 cases than against 20."""
+    from finrag.eval.compare import BackendResult, ComparisonReport
+
+    report = ComparisonReport(
+        suite="agent",
+        results=[
+            BackendResult(
+                "groq",
+                "m",
+                {
+                    "tool_path_accuracy": 0.8,
+                    "errors": 2,
+                    "errors_all_attempts": 6,
+                    "cases": 20,
+                },
+            )
+        ],
+    )
+    row = [line for line in report.as_markdown().splitlines() if "groq" in line][0]
+    assert "2 of 20" in row
+    assert "6 all attempts" in row, "a resumed run must not read as a clean single pass"
+
+
+# ---- result files must not silently overwrite each other --------------------
+
+
+def test_result_files_do_not_collide_within_one_second(tmp_path):
+    """A fully-checkpointed --resume run makes no LLM calls and finishes in
+    milliseconds, so several backends regenerated back to back land in the same
+    second. Each wrote the same filename and only the last survived."""
+    from finrag.eval.tracking import track_run
+
+    for backend in ("groq", "cerebras", "github"):
+        params = {"llm_backend": backend, "resolved_model": f"{backend}-model"}
+        with track_run("agent", params, results_dir=tmp_path) as record:
+            record({"tool_path_accuracy": 0.5})
+
+    files = sorted(tmp_path.glob("*.json"))
+    assert len(files) == 3, f"runs overwrote each other: {[f.name for f in files]}"
+    assert all(any(b in f.name for b in ("groq", "cerebras", "github")) for f in files)
+
+
+def test_identical_runs_get_distinct_files(tmp_path):
+    """Even the same backend twice in the same second must not clobber."""
+    from finrag.eval.tracking import track_run
+
+    params = {"llm_backend": "groq", "resolved_model": "llama-3.3-70b-versatile"}
+    for _ in range(2):
+        with track_run("agent", params, results_dir=tmp_path) as record:
+            record({"tool_path_accuracy": 0.5})
+    assert len(list(tmp_path.glob("*.json"))) == 2
+
+
+# ---- the cache fix generalises beyond the client that exposed it ------------
+
+
+def test_cache_namespacing_covers_every_backend(monkeypatch, tmp_path):
+    """ChatOllama surfaced this, but the fix is at the file level precisely so
+    it does not depend on auditing each client's cache key -- including
+    ChatVertexAI, which is not installed here and so cannot be inspected."""
+    from finrag.cache import cache_path
+
+    monkeypatch.setenv("FINRAG_DATA_ROOT", str(tmp_path))
+    base = get_settings()
+    paths = {
+        cache_path(replace(base, llm_backend=b, chat_model=""))
+        for b in ("ollama", "vertex", "groq", "cerebras", "github", "anthropic")
+    }
+    assert len(paths) == 6, "one cache file per backend, no sharing"

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
@@ -99,10 +100,26 @@ def track_run(name: str, params: dict[str, Any], results_dir: Path | None = None
             if numeric:
                 mlflow.log_metrics(numeric)
 
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    # Second-resolution stamps collide: a fully-checkpointed --resume run makes
+    # no LLM calls at all (the agent is never even constructed) and finishes in
+    # milliseconds, so regenerating several backends from existing checkpoints
+    # lands them in the same second. Each would write the same filename and only
+    # the last would survive -- with no error and no gap in the sequence to show
+    # the others were lost. Microseconds plus the run identity, and never
+    # overwrite.
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+    backend = str(params.get("llm_backend", "")).strip()
+    model = str(params.get("resolved_model", "")).strip()
+    slug = re.sub(r"[^a-z0-9]+", "-", f"{backend}-{model}".lower()).strip("-")
+    stem = f"{name}-{slug}-{stamp}" if slug else f"{name}-{stamp}"
+
     out_dir = results_dir or Path("results")
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{name}-{stamp}.json"
+    path = out_dir / f"{stem}.json"
+    suffix = 2
+    while path.exists():
+        path = out_dir / f"{stem}-{suffix}.json"
+        suffix += 1
     path.write_text(
         json.dumps(
             {"run": name, "timestamp": stamp, "params": params, "metrics": captured}, indent=2
