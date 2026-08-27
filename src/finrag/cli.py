@@ -29,8 +29,18 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_download = sub.add_parser("download", help="fetch 10-K filings from SEC EDGAR")
-    p_download.add_argument("--tickers", default=",".join(DEFAULT_TICKERS))
-    p_download.add_argument("--years", type=int, default=5)
+    p_download.add_argument(
+        "--tickers",
+        default=",".join(DEFAULT_TICKERS),
+        help="comma-separated ticker symbols, e.g. AAPL,AMZN (default: %(default)s)",
+    )
+    p_download.add_argument(
+        "--years",
+        type=int,
+        default=5,
+        help="how many of the most recent fiscal years to fetch per ticker "
+        "(default: %(default)s)",
+    )
 
     sub.add_parser("index", help="parse and index downloaded filings (idempotent)")
     sub.add_parser("status", help="show configuration and index size")
