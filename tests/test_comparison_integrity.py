@@ -371,6 +371,12 @@ def test_reindexing_with_new_chunking_replaces_the_old(monkeypatch, tmp_path):
     indexed twice at two granularities."""
     from pathlib import Path
 
+    # This one actually embeds, unlike the rest of the file. The unit-test CI
+    # job installs only [dev] to stay light -- the quality gate is the job that
+    # carries [local] -- so without this guard the whole matrix fails on a
+    # missing sentence-transformers rather than on anything to do with the code.
+    pytest.importorskip("langchain_huggingface")
+
     from finrag.ingest.index import collection_size, index_filings
 
     monkeypatch.setenv("FINRAG_CHUNK_STRATEGY", "recursive")
