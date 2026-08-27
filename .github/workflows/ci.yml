@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # No API keys and no network calls to model providers: the suite runs on
+      # committed fixtures with the local embedding backend, so it works on a
+      # fork and for anyone who clones the repo.
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check src tests app.py
+
+      - name: Format check
+        run: ruff format --check src tests app.py
+
+      - name: Test
+        env:
+          FINRAG_CHUNK_STRATEGY: recursive
+        run: pytest --cov=finrag --cov-report=term-missing
