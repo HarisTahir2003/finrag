@@ -1,0 +1,36 @@
+# Three-case smoke suite, sized for free daily quotas.
+#
+# Every question is answerable from the committed test fixtures, so this runs
+# on a fresh clone with `--fixtures` and no downloads. It exists for two jobs:
+# the CI llm-smoke check (GitHub Models allows ~150 requests/day on mini-class
+# models, which a 20-case agent run would burn through), and a cheap first
+# sanity pass when trying a new backend -- tool calling is the thing to verify
+# on an open model before spending quota on the full suite.
+
+dataset: smoke
+description: Minimal end-to-end agent check over the committed fixtures.
+
+cases:
+  - id: smoke-calc-aapl-2023
+    category: calc
+    ticker: AAPL
+    fiscal_year: 2023
+    question: "What is the current ratio for Apple in fiscal 2023?"
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "About 0.988 (total current assets $143,566M / total current liabilities $145,308M)."
+
+  - id: smoke-narrative-amzn-2022
+    category: narrative
+    ticker: AMZN
+    fiscal_year: 2022
+    question: "Why did Amazon change its fulfillment network in 2022?"
+    expected_tools: [search_10k_reports]
+    reference_answer: "Regionalization of the fulfillment network to shorten transportation distances and improve unit cost efficiency."
+
+  - id: smoke-mixed-nvda-2024
+    category: mixed
+    ticker: NVDA
+    fiscal_year: 2024
+    question: "Using cost of revenue and inventories, estimate NVIDIA's inventory turnover for fiscal 2024."
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "Roughly 3.1x (cost of revenue $16,621M / inventories $5,282M)."

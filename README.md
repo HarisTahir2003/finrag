@@ -27,7 +27,9 @@ which is the usual failure mode when an LLM is asked to do arithmetic on a docum
 | `src/finrag/ingest/index.py` | Chunking and idempotent upsert into Chroma. |
 | `src/finrag/chunking.py` | Structure-aware or fixed-width chunking. |
 | `src/finrag/embeddings.py` | Local (sentence-transformers) or Google embedding backends. |
-| `src/finrag/llm.py` | Chat backends: Anthropic, Google, Groq or local Ollama. |
+| `src/finrag/llm.py` | Chat backends — commercial, hosted open-weight, or local — with per-tier rate limiting and fallback chains. |
+| `src/finrag/cache.py` | SQLite LLM response cache: unchanged re-runs cost zero tokens. |
+| `src/finrag/eval/checkpoint.py` | Per-case eval checkpointing, so a run survives a daily quota. |
 | `src/finrag/retrieval.py` | Filtered search, query expansion, reciprocal rank fusion. |
 | `src/finrag/calculator.py` | AST-whitelisted arithmetic — the agent's calculator tool. |
 | `src/finrag/agent.py` | Tool-calling agent over retrieval + calculator. |
@@ -84,13 +86,14 @@ calls are answering questions and running the LLM-scored evaluations.
 |---|---|---|
 | `cerebras` | `gpt-oss-120b` | `CEREBRAS_API_KEY` |
 | `groq` | `llama-3.3-70b-versatile` | `GROQ_API_KEY` |
+| `github` | `openai/gpt-4o-mini` | `GITHUB_TOKEN` |
 | `openrouter` | `meta-llama/llama-3.3-70b-instruct` | `OPENROUTER_API_KEY` |
 | `together` | `meta-llama/Llama-3.3-70B-Instruct-Turbo` | `TOGETHER_API_KEY` |
 | `fireworks` | `llama-v3p3-70b-instruct` | `FIREWORKS_API_KEY` |
 | `deepinfra` | `meta-llama/Llama-3.3-70B-Instruct` | `DEEPINFRA_API_KEY` |
 
-All six speak the OpenAI chat-completions protocol, so they share one client and differ only by
-base URL, default model and key variable. Adding another — or pointing at a self-hosted vLLM or
+All of these speak the OpenAI chat-completions protocol, so they share one client and differ only
+by base URL, default model and key variable. Adding another — or pointing at a self-hosted vLLM or
 LM Studio server via `FINRAG_OPENAI_BASE_URL` — is one entry in `PROVIDER_PRESETS`, not one more
 backend.
 
@@ -105,6 +108,26 @@ Most reliable tool calling, paid per token.
 these**. Only answering questions and the LLM-scored evaluations are billable, and on the two
 open-weight backends not even those.
 
+### Running the whole thing at $0
+
+The pipeline is built to run end to end — ingest, agent, both LLM-scored evaluations, CI — on free
+tiers alone, and the machinery that makes that *reliable* rather than lucky is part of the
+codebase:
+
+| Free-tier failure mode | What handles it |
+|---|---|
+| Per-minute rate caps (429s) | A client-side token-bucket limiter paces every call under each tier's published RPM — defaults per backend in `DEFAULT_RPM`, override with `FINRAG_RPM`. Never hitting the limit beats recovering from it. |
+| Request-size ceilings (Cerebras and GitHub Models enforce ~8K per request as a hard 400) | Retrieved context is trimmed to a token budget before it reaches the model (`FINRAG_MAX_CONTEXT_TOKENS=auto`), dropping the lowest-ranked whole chunks instead of failing the call. |
+| Daily quotas dying mid-run | Every completed evaluation case is checkpointed to `results/<suite>-cases.jsonl` as it finishes; rerun with `--resume` and only the unfinished cases spend quota. Failed cases are deliberately not checkpointed, so they retry. |
+| Re-running while iterating | Identical LLM calls are served from a SQLite cache (`data/llm_cache.db`, on by default) — an unchanged re-run costs zero tokens. RAGAS judge calls benefit most. |
+| One provider's quota too small | `FINRAG_LLM_FALLBACKS=groq,openrouter` chains providers on the plain-chat paths, making the usable budget the union of the tiers. |
+| RAGAS's own concurrency | The judge runs with `RunConfig(max_workers=1)` plus bounded retries — the default of 16 concurrent workers is a guaranteed 429 on any free tier. |
+
+The split that works: **Cerebras** for batch evaluation (largest daily token budget), **Groq** for
+interactive asking (fastest), **GitHub Models** for CI (the built-in `GITHUB_TOKEN` can call it
+once the workflow requests `permissions: models: read` — the `llm-smoke` job runs a real agent
+evaluation on every push with zero repository secrets), and **Ollama** offline. None needs a card.
+
 Three things to know when running open-weight models:
 
 - **Free tiers cap tokens per minute**, and a default retrieval of 20 chunks will breach most of
@@ -112,7 +135,8 @@ Three things to know when running open-weight models:
 - **Tool calling is the thing to test first**, not general quality. This agent must call a
   retrieval tool and a calculator; a model that silently drops a tool call answers from memory and
   invents a figure, which is worse than refusing. Reliability varies a lot across open models, and
-  free variants on aggregators are often the weakest.
+  free variants on aggregators are often the weakest. `finrag eval agent --fixtures --dataset
+  smoke` is the three-question check built for exactly this.
 - **Ollama truncates prompts** longer than `num_ctx` without reporting it, which presents as the
   model ignoring its context rather than never having received it. `FINRAG_OLLAMA_NUM_CTX` defaults
   to 16384.

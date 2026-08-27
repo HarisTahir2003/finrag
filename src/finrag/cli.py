@@ -53,6 +53,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="ragas only: score against gold context instead of the retriever, reproducing the original measurement",
     )
+    p_eval.add_argument(
+        "--dataset",
+        default=None,
+        help="named case set from eval/datasets (e.g. 'smoke' for the 3-case CI suite)",
+    )
+    p_eval.add_argument(
+        "--resume",
+        action="store_true",
+        help="skip cases already completed in results/<suite>-cases.jsonl -- lets a run "
+        "that died on a free tier's daily quota finish later without repeating calls",
+    )
 
     args = parser.parse_args(argv)
     _configure_logging(args.verbose)
@@ -136,11 +147,29 @@ def _fixture_index(settings):
 
 
 def _run_eval(args, settings) -> int:
+    from pathlib import Path
+
     from .eval.tracking import config_params, track_run
 
     store = None
     if args.fixtures:
         store, settings = _fixture_index(settings)
+
+    # Named case sets live next to the built-in ones; --dataset smoke selects
+    # the 3-case suite sized for free daily quotas (and used by CI).
+    cases = None
+    if args.dataset:
+        from .eval.schema import DATASETS_DIR, load_agent_cases
+
+        cases = load_agent_cases(DATASETS_DIR / f"{args.dataset}.yaml")
+
+    # Checkpoints use a stable path per suite so --resume can find them. A
+    # fresh (non-resume) run starts clean rather than inheriting stale cases.
+    checkpoint_path = None
+    if args.suite in ("ragas", "agent"):
+        checkpoint_path = Path("results") / f"{args.suite}-cases.jsonl"
+        if not args.resume and checkpoint_path.exists():
+            checkpoint_path.unlink()
 
     if args.suite == "retrieval":
         from .eval.gate import check
@@ -163,7 +192,12 @@ def _run_eval(args, settings) -> int:
         from .eval.ragas_eval import evaluate_ragas
 
         report = evaluate_ragas(
-            store=store, settings=settings, use_gold_context=args.gold_context, limit=args.limit
+            cases=cases,
+            store=store,
+            settings=settings,
+            use_gold_context=args.gold_context,
+            limit=args.limit,
+            checkpoint_path=checkpoint_path,
         )
         metrics = report.as_metrics()
         with track_run(f"ragas-{report.context_source}", config_params(settings)) as record:
@@ -172,9 +206,17 @@ def _run_eval(args, settings) -> int:
         print("\n".join(f"  {k:22} {v}" for k, v in metrics.items()))
         return 0
 
+    from .cache import enable_llm_cache
     from .eval.agent_eval import evaluate_agent
 
-    report = evaluate_agent(store=store, settings=settings, limit=args.limit)
+    enable_llm_cache(settings)
+    report = evaluate_agent(
+        cases=cases,
+        store=store,
+        settings=settings,
+        limit=args.limit,
+        checkpoint_path=checkpoint_path,
+    )
     print(report.format_table())
     metrics = report.as_metrics()
     with track_run("agent", config_params(settings)) as record:

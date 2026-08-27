@@ -47,6 +47,28 @@ class Settings:
         default_factory=lambda: int(_env("FINRAG_MAX_OUTPUT_TOKENS", "4000"))
     )
 
+    # ---- Free-tier survival -------------------------------------------------
+    # Client-side requests-per-minute. Unset -> the per-backend default in
+    # finrag.llm.DEFAULT_RPM (sized just under each free tier's cap); 0 -> off.
+    requests_per_minute: float | None = field(
+        default_factory=lambda: (
+            float(v) if (v := os.environ.get("FINRAG_RPM")) not in (None, "") else None
+        )
+    )
+    # Comma-separated backends to fail over to when the primary errors out --
+    # on a free tier that usually means its daily quota, so the usable budget
+    # becomes the union of the tiers. Applied on plain-chat paths.
+    llm_fallbacks: str = field(default_factory=lambda: _env("FINRAG_LLM_FALLBACKS", ""))
+    # Cache identical LLM calls in SQLite so re-running an unchanged evaluation
+    # costs zero tokens. On by default for eval commands; "0" disables.
+    llm_cache: bool = field(default_factory=lambda: _env("FINRAG_LLM_CACHE", "1") != "0")
+    # Trim retrieved context to a token budget before it reaches the model.
+    # "auto" resolves per backend: free tiers with hard request-size ceilings
+    # (Cerebras 8K, GitHub Models 8K-in) get 6000, everything else unlimited.
+    max_context_tokens_raw: str = field(
+        default_factory=lambda: _env("FINRAG_MAX_CONTEXT_TOKENS", "auto")
+    )
+
     # Overrides the preset base URL for OpenAI-compatible backends. Point this
     # at a self-hosted vLLM or LM Studio server to use one.
     openai_base_url: str = field(default_factory=lambda: _env("FINRAG_OPENAI_BASE_URL", ""))
@@ -73,6 +95,20 @@ class Settings:
 
     sec_contact_email: str = field(default_factory=lambda: _env("SEC_CONTACT_EMAIL", ""))
     sec_company_name: str = field(default_factory=lambda: _env("SEC_COMPANY_NAME", "finrag"))
+
+    @property
+    def max_context_tokens(self) -> int:
+        """Resolved context budget in tokens; 0 means unlimited.
+
+        The 8,192-token ceilings on the Cerebras free tier and GitHub Models
+        are request-size limits, not truncation -- exceed them and the call
+        fails with a 400. 6000 leaves room for the system prompt, question and
+        agent scratchpad inside an 8K window.
+        """
+        raw = self.max_context_tokens_raw.strip().lower()
+        if raw == "auto":
+            return 6000 if self.llm_backend.lower() in ("cerebras", "github") else 0
+        return int(raw)
 
     @property
     def filings_dir(self) -> Path:

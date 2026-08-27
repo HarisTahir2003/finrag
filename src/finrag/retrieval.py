@@ -62,6 +62,37 @@ def reciprocal_rank_fusion(result_sets: list[list[Document]], k: int = 60) -> li
     return [seen[key] for key, _ in ranked]
 
 
+def trim_to_token_budget(docs: list[Document], max_tokens: int) -> list[Document]:
+    """Keep the top-ranked whole chunks that fit inside a token budget.
+
+    Some free tiers enforce a hard request-size ceiling (Cerebras 8K, GitHub
+    Models 8K-in) where an oversized prompt is a 400 error, not a truncation.
+    Dropping the lowest-ranked chunks degrades recall gracefully; a failed call
+    retrieves nothing at all. Chunks are never split -- half a balance-sheet
+    table is worse than none. chars/4 is the usual rough token estimate, close
+    enough for a budget that already carries headroom.
+    """
+    if max_tokens <= 0:
+        return docs
+    budget_chars = max_tokens * 4
+    kept: list[Document] = []
+    used = 0
+    for doc in docs:
+        cost = len(doc.page_content)
+        if kept and used + cost > budget_chars:
+            break
+        kept.append(doc)
+        used += cost
+    if len(kept) < len(docs):
+        log.info(
+            "context trimmed to %d of %d chunks (budget %d tokens)",
+            len(kept),
+            len(docs),
+            max_tokens,
+        )
+    return kept
+
+
 def search_filing(
     query: str,
     ticker: str,
@@ -82,4 +113,5 @@ def search_filing(
     except Exception as exc:  # noqa: BLE001 - surfaced to the agent as text, not raised
         log.error("retrieval failed for %s FY%s: %s", ticker, fiscal_year, exc)
         docs = []
+    docs = trim_to_token_budget(docs, settings.max_context_tokens)
     return Retrieved(documents=docs, ticker=ticker.upper(), fiscal_year=int(fiscal_year))

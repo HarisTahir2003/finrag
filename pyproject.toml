@@ -18,6 +18,9 @@ dependencies = [
     "lxml>=5.1.0",
     "sec-edgar-downloader>=5.0.0",
     "langchain-core>=0.3",
+    # SQLiteCache for LLM response caching -- what makes evaluation re-runs
+    # free on rate-limited tiers.
+    "langchain-community>=0.3",
     "langchain-text-splitters>=0.2.0",
     "langchain-chroma>=0.1.2",
     "chromadb>=0.5",

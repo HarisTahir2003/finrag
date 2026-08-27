@@ -81,3 +81,55 @@ jobs:
           name: eval-results
           path: results/
           if-no-files-found: ignore
+
+  llm-smoke:
+    name: agent smoke test (GitHub Models)
+    runs-on: ubuntu-latest
+    # An LLM's output is not deterministic, and the free tier can be saturated
+    # by other users of the shared quota -- so this job reports rather than
+    # blocks. The deterministic retrieval gate above stays the required check.
+    continue-on-error: true
+    # models: read lets the built-in GITHUB_TOKEN call GitHub Models -- an
+    # end-to-end agent run in CI with zero repository secrets, on forks too.
+    permissions:
+      contents: read
+      models: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,local,openai-compatible]"
+
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ hashFiles('pyproject.toml') }}
+
+      # Three fixture-answerable questions through the real tool-calling agent.
+      # GitHub Models' free tier allows ~150 requests/day on mini-class models
+      # with 8K-token requests, which is exactly smoke-test sized; the context
+      # trimmer (FINRAG_MAX_CONTEXT_TOKENS=auto) keeps requests under that lid.
+      - name: Agent smoke suite
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FINRAG_LLM_BACKEND: github
+          FINRAG_CHUNK_STRATEGY: recursive
+          FINRAG_RETRIEVAL_K: "6"
+        run: finrag eval agent --fixtures --dataset smoke
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-smoke-results
+          path: results/
+          if-no-files-found: ignore

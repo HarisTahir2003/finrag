@@ -1,7 +1,7 @@
 """Pluggable chat model backends.
 
-Four backends, selected by configuration, because the pipeline should not be
-welded to whichever provider the author happened to have credits with:
+Selected by FINRAG_LLM_BACKEND, because the pipeline should not be welded to
+whichever provider the author happened to have credits with:
 
 ``anthropic`` / ``google``
     Commercial APIs. Most reliable tool calling, paid per token.
@@ -18,6 +18,18 @@ welded to whichever provider the author happened to have credits with:
     roughly 3GB of RAM, an 8B closer to 6GB, and long retrieval contexts add
     more on top.
 
+``cerebras`` / ``openrouter`` / ``together`` / ``fireworks`` / ``deepinfra`` /
+``openai`` / ``github``
+    OpenAI-compatible endpoints -- one client, differing only by base URL,
+    default model and key variable (see PROVIDER_PRESETS). cerebras and github
+    have free tiers; github additionally works inside GitHub Actions with the
+    built-in GITHUB_TOKEN.
+
+Free-tier survival is built in rather than left to the caller: a client-side
+token-bucket rate limiter paces requests under each tier's published RPM
+(DEFAULT_RPM / FINRAG_RPM), and build_with_fallbacks() chains providers so one
+exhausted daily quota fails over to the next instead of failing the run.
+
 Note the asymmetry: Anthropic publishes no embedding model, so the embedding
 backend stays independent of this one. That is not a limitation in practice --
 ``finrag.embeddings`` defaults to local sentence-transformers, which costs
@@ -27,7 +39,7 @@ nothing and needs no key at all.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .config import Settings, get_settings
@@ -48,6 +60,25 @@ DEFAULT_MODELS = {
 
 # Backends that need no credentials at all.
 KEYLESS_BACKENDS = frozenset({"ollama"})
+
+# Default client-side requests-per-minute per backend, sized a little under each
+# free tier's published cap so the limit is never *hit*, only approached. Free
+# tiers return 429s that burn retries and, on some providers, count against the
+# daily quota anyway -- pacing beats recovering. None means unthrottled (paid
+# APIs and local models). Override with FINRAG_RPM; 0 disables.
+DEFAULT_RPM: dict[str, float | None] = {
+    "anthropic": None,
+    "google": None,
+    "ollama": None,  # local: the bottleneck is the machine, not a quota
+    "groq": 25,  # free tier ~30 RPM
+    "cerebras": 25,  # free tier ~30 RPM
+    "openrouter": 18,  # free models ~20 RPM
+    "github": 8,  # free tier ~10 RPM
+    "together": None,
+    "fireworks": None,
+    "deepinfra": None,
+    "openai": None,
+}
 
 
 @dataclass(frozen=True)
@@ -94,7 +125,40 @@ PROVIDER_PRESETS: dict[str, Preset] = {
         "DEEPINFRA_API_KEY",
     ),
     "openai": Preset("https://api.openai.com/v1", "gpt-4o-mini", "OPENAI_API_KEY"),
+    "github": Preset(
+        "https://models.github.ai/inference",
+        "openai/gpt-4o-mini",
+        "GITHUB_TOKEN",
+        "Free with any GitHub account; ~150 requests/day on mini-class models, 8K in / "
+        "4K out per request. Inside GitHub Actions the built-in GITHUB_TOKEN works once "
+        "the workflow requests `permissions: models: read` -- LLM calls in CI with zero "
+        "secrets. Sized for smoke tests, not full evaluation runs.",
+    ),
 }
+
+
+def _rate_limiter(backend: str, settings: Settings):
+    """Client-side throttle for the backend, or None when unthrottled.
+
+    ``InMemoryRateLimiter`` is a token bucket that blocks the caller until a
+    request slot is available. It is per-process and time-based only, which is
+    exactly the shape of the problem: one CLI run pacing itself under an RPM
+    cap. max_bucket_size=1 forbids bursts, since free tiers meter per minute
+    but police in much smaller windows.
+    """
+    rpm = settings.requests_per_minute
+    if rpm is None:
+        rpm = DEFAULT_RPM.get(backend)
+    if not rpm or rpm <= 0:
+        return None
+
+    from langchain_core.rate_limiters import InMemoryRateLimiter
+
+    return InMemoryRateLimiter(
+        requests_per_second=rpm / 60.0,
+        check_every_n_seconds=0.25,
+        max_bucket_size=1,
+    )
 
 
 def get_chat_model(settings: Settings | None = None, **overrides: Any) -> Any:
@@ -111,6 +175,9 @@ def get_chat_model(settings: Settings | None = None, **overrides: Any) -> Any:
 
     model = settings.chat_model or DEFAULT_MODELS.get(backend, "")
     params = {"temperature": 0, **overrides}
+    limiter = _rate_limiter(backend, settings)
+    if limiter is not None:
+        params.setdefault("rate_limiter", limiter)
 
     if backend == "anthropic":
         try:
@@ -170,14 +237,54 @@ def _openai_compatible(backend: str, settings: Settings, **overrides: Any) -> An
             f"{preset.key_env} is not set. The {backend} backend needs it; "
             f"see {preset.base_url} for where to get a key."
         )
+    params: dict[str, Any] = {
+        "temperature": 0,
+        "max_tokens": settings.max_output_tokens,
+        # Free tiers 429 under load even when paced; bounded retries with the
+        # provider SDK's own backoff mop up what the rate limiter cannot see
+        # (server-side token-per-minute accounting, shared-IP contention).
+        "max_retries": 6,
+        **overrides,
+    }
+    limiter = _rate_limiter(backend, settings)
+    if limiter is not None:
+        params.setdefault("rate_limiter", limiter)
     return ChatOpenAI(
         model=settings.chat_model or preset.default_model,
         base_url=settings.openai_base_url or preset.base_url,
         api_key=key,
-        temperature=0,
-        max_tokens=settings.max_output_tokens,
-        **overrides,
+        **params,
     )
+
+
+def build_with_fallbacks(settings: Settings | None = None, **overrides: Any) -> Any:
+    """The configured chat model, falling back through FINRAG_LLM_FALLBACKS.
+
+    Free tiers fail by quota as much as by outage, and each provider's quota is
+    independent -- so a fallback chain makes the usable budget the union of the
+    tiers. Each fallback backend is built with its *own* default model, never
+    the primary's FINRAG_CHAT_MODEL, because model ids do not transfer between
+    providers.
+
+    Used on plain-chat paths (the RAGAS generator and judge). The tool-calling
+    agent keeps a single backend: ``create_tool_calling_agent`` must call
+    ``bind_tools`` on the model, and a ``RunnableWithFallbacks`` does not expose
+    it, so wiring fallbacks there would mean rebuilding the agent per provider
+    for marginal benefit.
+    """
+    settings = settings or get_settings()
+    primary = get_chat_model(settings, **overrides)
+
+    names = [n.strip().lower() for n in settings.llm_fallbacks.split(",") if n.strip()]
+    names = [n for n in names if n != settings.llm_backend.lower()]
+    if not names:
+        return primary
+
+    fallbacks = [
+        get_chat_model(replace(settings, llm_backend=name, chat_model=""), **overrides)
+        for name in names
+    ]
+    return primary.with_fallbacks(fallbacks)
 
 
 def all_backends() -> list[str]:

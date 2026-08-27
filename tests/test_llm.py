@@ -101,7 +101,9 @@ def test_every_preset_is_complete():
     for name, preset in PROVIDER_PRESETS.items():
         assert preset.base_url.startswith("https://"), name
         assert preset.default_model, name
-        assert preset.key_env.endswith("_API_KEY"), name
+        # github uses GITHUB_TOKEN -- the one preset whose credential is a
+        # platform token rather than a provider API key.
+        assert preset.key_env.endswith(("_API_KEY", "_TOKEN")), name
 
 
 def test_all_backends_covers_both_families():

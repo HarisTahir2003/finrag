@@ -110,14 +110,26 @@ def evaluate_agent(
     store=None,
     settings: Settings | None = None,
     limit: int | None = None,
+    checkpoint_path=None,
 ) -> AgentReport:
-    """Run the agent over the question set. Requires GOOGLE_API_KEY."""
+    """Run the agent over the question set.
+
+    Needs whichever provider key settings.llm_backend requires. With
+    ``checkpoint_path`` set, each successful case is persisted as it completes
+    and a rerun skips it -- which is what lets a run larger than a free tier's
+    daily quota finish across days instead of restarting from zero.
+    """
+    from .checkpoint import Checkpoint
+
     settings = settings or get_settings()
     cases = cases if cases is not None else load_agent_cases()
     if limit:
         cases = cases[:limit]
 
-    if agent is None:
+    checkpoint = Checkpoint(checkpoint_path)
+    pending = [c for c in cases if checkpoint.completed(c.id) is None]
+
+    if agent is None and pending:
         from ..agent import build_agent
         from ..ingest.index import open_store
 
@@ -125,6 +137,17 @@ def evaluate_agent(
 
     report = AgentReport()
     for case in cases:
+        done = checkpoint.completed(case.id)
+        if done is not None:
+            report.results.append(
+                AgentCaseResult(
+                    case=case,
+                    answer=done.get("answer", ""),
+                    tools_called=list(done.get("tools_called", [])),
+                )
+            )
+            continue
+
         # The ticker and fiscal year are stated in the prompt as well as being
         # present in the question, so a failure to use them is the agent's,
         # not the harness's.
@@ -140,5 +163,11 @@ def evaluate_agent(
             log.error("%s: %s", case.id, exc)
             result = AgentCaseResult(case=case, answer="", error=str(exc))
         report.results.append(result)
+        # Failed cases are deliberately not checkpointed: on a free tier the
+        # error is usually the quota, and the point of resuming is to retry.
+        if result.error is None:
+            checkpoint.record(
+                case.id, {"answer": result.answer, "tools_called": result.tools_called}
+            )
         log.info("%-28s tools=%s", case.id, result.tools_called or "none")
     return report

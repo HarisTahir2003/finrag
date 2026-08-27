@@ -83,13 +83,36 @@ def build_samples(
     store=None,
     settings: Settings | None = None,
     use_gold_context: bool = False,
+    checkpoint_path=None,
 ) -> list[RagasSample]:
-    """Generate an answer per case, with context from the retriever by default."""
+    """Generate an answer per case, with context from the retriever by default.
+
+    Generation is the per-case, quota-hungry half of the evaluation, so with
+    ``checkpoint_path`` set each completed sample is persisted and a rerun
+    regenerates only what is missing. (The scoring half is protected by the
+    LLM response cache instead -- judge calls repeat verbatim across reruns.)
+    """
+    from .checkpoint import Checkpoint
+
     settings = settings or get_settings()
     source = "gold" if use_gold_context else "retrieved"
+    checkpoint = Checkpoint(checkpoint_path)
     samples: list[RagasSample] = []
 
     for case in cases:
+        done = checkpoint.completed(case.id)
+        if done is not None and done.get("context_source") == source:
+            samples.append(
+                RagasSample(
+                    question=done["question"],
+                    answer=done["answer"],
+                    contexts=list(done["contexts"]),
+                    reference=done["reference"],
+                    context_source=source,
+                )
+            )
+            continue
+
         if use_gold_context:
             contexts = [case.reference_answer]
         else:
@@ -101,14 +124,23 @@ def build_samples(
                 log.warning("%s: retrieved nothing; scoring against empty context", case.id)
 
         answer = _generate_answer(llm, case.question, "\n\n".join(contexts))
-        samples.append(
-            RagasSample(
-                question=case.question,
-                answer=answer,
-                contexts=contexts or [""],
-                reference=case.reference_answer,
-                context_source=source,
-            )
+        sample = RagasSample(
+            question=case.question,
+            answer=answer,
+            contexts=contexts or [""],
+            reference=case.reference_answer,
+            context_source=source,
+        )
+        samples.append(sample)
+        checkpoint.record(
+            case.id,
+            {
+                "question": sample.question,
+                "answer": sample.answer,
+                "contexts": sample.contexts,
+                "reference": sample.reference,
+                "context_source": source,
+            },
         )
         log.info("%s: answered from %d context chunks", case.id, len(contexts))
 
@@ -121,35 +153,49 @@ def evaluate_ragas(
     settings: Settings | None = None,
     use_gold_context: bool = False,
     limit: int | None = None,
+    checkpoint_path=None,
 ) -> RagasReport:
-    """Score answer quality with RAGAS. Requires GOOGLE_API_KEY."""
+    """Score answer quality with RAGAS.
+
+    Needs whichever provider key settings.llm_backend requires. Free-tier
+    survival is layered in here: the chat model carries a client-side rate
+    limiter and an optional fallback chain, the SQLite response cache absorbs
+    repeated judge calls across reruns, generation checkpoints per case, and
+    the scoring pass runs serially (RunConfig) because RAGAS's default of 16
+    concurrent workers is a guaranteed 429 on a free tier.
+    """
     try:
         from datasets import Dataset
         from ragas import evaluate
         from ragas.embeddings import LangchainEmbeddingsWrapper
         from ragas.llms import LangchainLLMWrapper
         from ragas.metrics import answer_relevancy, context_precision, faithfulness
+        from ragas.run_config import RunConfig
     except ImportError as exc:
         raise ImportError(
             "RAGAS evaluation needs the eval extra: pip install 'finrag[eval]'"
         ) from exc
 
+    from ..cache import enable_llm_cache
     from ..embeddings import get_embeddings
-    from ..llm import get_chat_model
+    from ..llm import build_with_fallbacks
 
     settings = settings or get_settings()
     cases = cases if cases is not None else load_agent_cases()
     if limit:
         cases = cases[:limit]
 
-    llm = get_chat_model(settings)
+    enable_llm_cache(settings)
+    llm = build_with_fallbacks(settings)
 
     if store is None and not use_gold_context:
         from ..ingest.index import open_store
 
         store = open_store(settings)
 
-    samples = build_samples(cases, llm, store, settings, use_gold_context)
+    samples = build_samples(
+        cases, llm, store, settings, use_gold_context, checkpoint_path=checkpoint_path
+    )
 
     dataset = Dataset.from_dict(
         {
@@ -167,6 +213,7 @@ def evaluate_ragas(
         metrics=[faithfulness, answer_relevancy, context_precision],
         llm=LangchainLLMWrapper(llm),
         embeddings=LangchainEmbeddingsWrapper(get_embeddings(settings)),
+        run_config=RunConfig(timeout=300, max_retries=10, max_wait=60, max_workers=1),
     )
 
     scores = {k: float(v) for k, v in dict(result).items() if isinstance(v, (int, float))}
