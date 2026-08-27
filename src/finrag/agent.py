@@ -79,20 +79,26 @@ def build_tools(store=None, settings: Settings | None = None) -> list:
 
 
 def build_agent(store=None, settings: Settings | None = None, verbose: bool = False):
-    """Assemble the agent executor. Requires the 'google' extra and GOOGLE_API_KEY."""
+    """Assemble the agent executor.
+
+    Needs whichever provider extra matches settings.llm_backend, and that
+    provider's API key. See finrag.llm.
+    """
     try:
         from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
         from langchain_core.prompts import ChatPromptTemplate
-        from langchain_google_genai import ChatGoogleGenerativeAI
     except ImportError as exc:
         raise ImportError(
-            "The agent needs the Google extra. Install with: pip install 'finrag[google]'"
+            "The agent needs langchain-classic: pip install 'finrag[anthropic]' "
+            "or pip install 'finrag[google]'"
         ) from exc
+
+    from .llm import get_chat_model
 
     settings = settings or get_settings()
     tools = build_tools(store=store, settings=settings)
 
-    llm = ChatGoogleGenerativeAI(model=settings.chat_model, temperature=0, max_output_tokens=4000)
+    llm = get_chat_model(settings)
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", SYSTEM_PROMPT),

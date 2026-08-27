@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 from finrag.config import get_settings
 from finrag.ingest.download import list_filings
+from finrag.llm import DEFAULT_MODELS, required_api_key
 
 load_dotenv()
 
@@ -26,11 +27,15 @@ settings = get_settings()
 with st.sidebar:
     st.title("Settings")
 
+    key_var = required_api_key(settings)
     api_key = st.text_input(
-        "Google API key", type="password", value=os.environ.get("GOOGLE_API_KEY", "")
+        f"{settings.llm_backend.title()} API key",
+        type="password",
+        value=os.environ.get(key_var, ""),
+        help=f"Read from {key_var}. Model: {settings.chat_model or DEFAULT_MODELS[settings.llm_backend]}",
     )
     if api_key:
-        os.environ["GOOGLE_API_KEY"] = api_key
+        os.environ[key_var] = api_key
 
     st.divider()
     st.caption("Index")
@@ -56,9 +61,9 @@ with st.sidebar:
 def load_agent(_key_fingerprint: str):
     """Build the agent once per API key.
 
-    The key is a cache parameter rather than a closure variable on purpose: the
-    previous version closed over it, so the first key entered in a session was
-    pinned and changing it silently had no effect.
+    The key fingerprint is a cache parameter rather than a closure variable on
+    purpose: the previous version closed over it, so the first key entered in a
+    session was pinned and changing it silently had no effect.
     """
     from finrag.agent import build_agent
     from finrag.ingest.index import open_store
@@ -80,8 +85,8 @@ for message in st.session_state.messages:
 
 placeholder = "Compare Apple and Amazon's current ratio in fiscal 2023"
 if prompt := st.chat_input(placeholder):
-    if not os.environ.get("GOOGLE_API_KEY"):
-        st.warning("Enter a Google API key in the sidebar first.")
+    if not os.environ.get(key_var):
+        st.warning(f"Enter a {settings.llm_backend.title()} API key in the sidebar first.")
     else:
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):

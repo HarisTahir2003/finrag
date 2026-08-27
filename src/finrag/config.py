@@ -37,7 +37,15 @@ class Settings:
     google_embedding_model: str = field(
         default_factory=lambda: _env("FINRAG_GOOGLE_EMBED_MODEL", "models/text-embedding-004")
     )
-    chat_model: str = field(default_factory=lambda: _env("FINRAG_CHAT_MODEL", "gemini-2.5-pro"))
+    # Which provider answers questions. Anthropic and Google are interchangeable
+    # here; the embedding backend above is chosen separately, because Anthropic
+    # publishes no embedding model.
+    llm_backend: str = field(default_factory=lambda: _env("FINRAG_LLM_BACKEND", "anthropic"))
+    # Empty means "use the default for the selected backend" -- see finrag.llm.
+    chat_model: str = field(default_factory=lambda: _env("FINRAG_CHAT_MODEL", ""))
+    max_output_tokens: int = field(
+        default_factory=lambda: int(_env("FINRAG_MAX_OUTPUT_TOKENS", "4000"))
+    )
 
     # "semantic" chunks on document structure via unstructured; "recursive" is
     # the faster fixed-width splitter. See finrag.chunking for the trade-off.

@@ -126,20 +126,23 @@ def evaluate_ragas(
     try:
         from datasets import Dataset
         from ragas import evaluate
+        from ragas.embeddings import LangchainEmbeddingsWrapper
+        from ragas.llms import LangchainLLMWrapper
         from ragas.metrics import answer_relevancy, context_precision, faithfulness
     except ImportError as exc:
         raise ImportError(
             "RAGAS evaluation needs the eval extra: pip install 'finrag[eval]'"
         ) from exc
 
-    from langchain_google_genai import ChatGoogleGenerativeAI
+    from ..embeddings import get_embeddings
+    from ..llm import get_chat_model
 
     settings = settings or get_settings()
     cases = cases if cases is not None else load_agent_cases()
     if limit:
         cases = cases[:limit]
 
-    llm = ChatGoogleGenerativeAI(model=settings.chat_model, temperature=0)
+    llm = get_chat_model(settings)
 
     if store is None and not use_gold_context:
         from ..ingest.index import open_store
@@ -156,7 +159,15 @@ def evaluate_ragas(
             "ground_truth": [s.reference for s in samples],
         }
     )
-    result = evaluate(dataset, metrics=[faithfulness, answer_relevancy, context_precision])
+    # Both must be passed explicitly. RAGAS falls back to OpenAI for the judge
+    # *and* for the embeddings that answer_relevancy uses, so leaving either
+    # unset fails with an OpenAI key error however the rest is configured.
+    result = evaluate(
+        dataset,
+        metrics=[faithfulness, answer_relevancy, context_precision],
+        llm=LangchainLLMWrapper(llm),
+        embeddings=LangchainEmbeddingsWrapper(get_embeddings(settings)),
+    )
 
     scores = {k: float(v) for k, v in dict(result).items() if isinstance(v, (int, float))}
     return RagasReport(

@@ -27,6 +27,7 @@ which is the usual failure mode when an LLM is asked to do arithmetic on a docum
 | `src/finrag/ingest/index.py` | Chunking and idempotent upsert into Chroma. |
 | `src/finrag/chunking.py` | Structure-aware or fixed-width chunking. |
 | `src/finrag/embeddings.py` | Local (sentence-transformers) or Google embedding backends. |
+| `src/finrag/llm.py` | Anthropic or Google chat backends, selected by config. |
 | `src/finrag/retrieval.py` | Filtered search, query expansion, reciprocal rank fusion. |
 | `src/finrag/calculator.py` | AST-whitelisted arithmetic — the agent's calculator tool. |
 | `src/finrag/agent.py` | Tool-calling agent over retrieval + calculator. |
@@ -53,9 +54,9 @@ git clone https://github.com/HarisTahir2003/finrag.git
 cd finrag
 
 python3 -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
-pip install -e ".[local,semantic,google,app,dev]"
+pip install -e ".[local,semantic,anthropic,app,dev]"     # or [google] instead of [anthropic]
 
-cp .env.example .env       # then fill in SEC_CONTACT_EMAIL, and GOOGLE_API_KEY for the agent
+cp .env.example .env       # then fill in SEC_CONTACT_EMAIL and one provider key
 ```
 
 The default embedding backend is **local** (`sentence-transformers/all-MiniLM-L6-v2`), so
@@ -65,10 +66,28 @@ the agent itself. Set `FINRAG_EMBEDDINGS=google` for the higher-quality embeddin
 
 Two environment variables matter:
 
-- **`GOOGLE_API_KEY`** — for the Gemini models and Google embeddings.
-  [Get one here](https://aistudio.google.com/app/apikey).
+- **One provider key.** `ANTHROPIC_API_KEY` by default, or `GOOGLE_API_KEY` with
+  `FINRAG_LLM_BACKEND=google`. Only the chat model needs a provider; embeddings are separate.
 - **`SEC_CONTACT_EMAIL`** — EDGAR requires a real contact address in the User-Agent header of
   every request and rate-limits anonymous traffic.
+
+### Providers and cost
+
+The chat backend and the embedding backend are chosen independently, which matters because
+Anthropic publishes no embedding model. Embeddings default to local sentence-transformers, so
+**indexing all fifty filings costs nothing** whichever chat provider you use — the only billable
+calls are answering questions and running the LLM-scored evaluations.
+
+| Setting | Default | Alternatives |
+|---|---|---|
+| `FINRAG_LLM_BACKEND` | `anthropic` | `google` |
+| `FINRAG_CHAT_MODEL` | backend default | any model the provider offers |
+| `FINRAG_EMBEDDINGS` | `local` (free) | `google` |
+
+Defaults are `claude-haiku-4-5-20251001` and `gemini-2.5-flash`, both picked for cost. The model is
+reading supplied context rather than reasoning from memory, so a small model is the right tool.
+Retrieval depth is the other cost lever: `FINRAG_RETRIEVAL_K=8` roughly halves tokens per call
+versus the default of 20.
 
 `FINRAG_DATA_ROOT` controls where filings and the vector store are written. It defaults to
 `./data`, which is gitignored. Nothing is stored outside the repository unless you point it
