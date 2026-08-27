@@ -1,0 +1,44 @@
+# ---- Secrets ----
+.env
+*.key
+
+# ---- Data, models, vector stores ----
+# The corpus is downloaded from SEC EDGAR and rebuilt by the ingest step; it is
+# never committed. FINRAG_DATA_ROOT points here by default.
+data/
+*.sqlite3
+chroma_db*/
+sec-edgar-filings/
+*.parquet
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+nlp_env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ---- Notebooks ----
+.ipynb_checkpoints/
+
+# Parts 1 and 2 (FinanceBench QnA, ECTSum summarization) are deliberately not
+# part of this repository. This one is the SEC filing agent only. Both remain
+# available in the original coursework repo:
+# https://github.com/HarisTahir2003/NLP_Applications_for_Financial_Reports
+Part1.ipynb
+Part2.ipynb
+
+# ---- Experiment tracking (added in Phase 2) ----
+mlruns/
+mlartifacts/
+
+# ---- OS / editor ----
+.DS_Store
+.vscode/
+.idea/
