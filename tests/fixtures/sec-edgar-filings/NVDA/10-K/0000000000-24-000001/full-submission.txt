@@ -1,0 +1,42 @@
+<SEC-DOCUMENT>0000000000-24-000001.txt : 20240221
+<SEC-HEADER>0000000000-24-000001.hdr.sgml : 20240221
+ACCESSION NUMBER:		0000000000-24-000001
+CONFORMED SUBMISSION TYPE:	10-K
+PUBLIC DOCUMENT COUNT:		2
+CONFORMED PERIOD OF REPORT:	20240128
+FILED AS OF DATE:		20240221
+FILER:
+	COMPANY DATA:
+		COMPANY CONFORMED NAME:			NVIDIA CORP
+		CENTRAL INDEX KEY:			0001045810
+</SEC-HEADER>
+<DOCUMENT>
+<TYPE>10-K
+<SEQUENCE>1
+<FILENAME>nvda-10k.htm
+<TEXT>
+<html><body>
+<p>Item 7. Management's Discussion and Analysis of Financial Condition and Results of Operations.</p>
+<p>Revenue for fiscal year 2024 was $60,922 million, up 126% from a year ago, driven by record Data Center revenue reflecting demand for our Hopper GPU computing platform. Cash, cash equivalents and marketable securities grew to $25,984 million.</p>
+<p>Item 8. Financial Statements and Supplementary Data.</p>
+<table>
+<tr><th>CONSOLIDATED STATEMENTS (in millions)</th><th>Current year</th><th>Prior year</th></tr>
+<tr><td>Revenue</td><td>60,922</td><td>26,974</td></tr>
+<tr><td>Cost of revenue</td><td>16,621</td><td>11,618</td></tr>
+<tr><td>Inventories</td><td>5,282</td><td>5,159</td></tr>
+<tr><td>Total current assets</td><td>44,345</td><td>23,073</td></tr>
+<tr><td>Total current liabilities</td><td>10,631</td><td>6,563</td></tr>
+</table>
+<p>Item 1A. Risk Factors. Long manufacturing lead times and uncertain supply and component availability, together with export controls affecting sales into certain markets, could materially harm our business.</p>
+</body></html>
+</TEXT>
+</DOCUMENT>
+<DOCUMENT>
+<TYPE>EX-21.1
+<SEQUENCE>2
+<FILENAME>ex21.htm
+<TEXT>
+<html><body><p>SUBSIDIARIES OF THE REGISTRANT. This exhibit must not be indexed.</p></body></html>
+</TEXT>
+</DOCUMENT>
+</SEC-DOCUMENT>

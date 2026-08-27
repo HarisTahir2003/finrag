@@ -1,0 +1,42 @@
+<SEC-DOCUMENT>0000000000-23-000001.txt : 20230203
+<SEC-HEADER>0000000000-23-000001.hdr.sgml : 20230203
+ACCESSION NUMBER:		0000000000-23-000001
+CONFORMED SUBMISSION TYPE:	10-K
+PUBLIC DOCUMENT COUNT:		2
+CONFORMED PERIOD OF REPORT:	20221231
+FILED AS OF DATE:		20230203
+FILER:
+	COMPANY DATA:
+		COMPANY CONFORMED NAME:			AMAZON COM INC
+		CENTRAL INDEX KEY:			0001018724
+</SEC-HEADER>
+<DOCUMENT>
+<TYPE>10-K
+<SEQUENCE>1
+<FILENAME>amzn-10k.htm
+<TEXT>
+<html><body>
+<p>Item 7. Management's Discussion and Analysis of Financial Condition and Results of Operations.</p>
+<p>Net sales increased 9% to $513,983 million in 2022. We recorded a net loss of $2,722 million, driven largely by a $12.7 billion pre-tax valuation loss on our Rivian common stock investment. We continued regionalization of our fulfillment network to shorten transportation distances and improve unit cost efficiency.</p>
+<p>Item 8. Financial Statements and Supplementary Data.</p>
+<table>
+<tr><th>CONSOLIDATED STATEMENTS (in millions)</th><th>Current year</th><th>Prior year</th></tr>
+<tr><td>Total net sales</td><td>513,983</td><td>469,822</td></tr>
+<tr><td>Net income (loss)</td><td>(2,722)</td><td>(33,364)</td></tr>
+<tr><td>Total current assets</td><td>146,791</td><td>161,580</td></tr>
+<tr><td>Total current liabilities</td><td>155,393</td><td>142,266</td></tr>
+<tr><td>Total assets</td><td>462,675</td><td>420,549</td></tr>
+</table>
+<p>Item 1A. Risk Factors. We face intense competition in e-commerce and cloud infrastructure services, and our expansion into new geographies exposes us to fluctuating foreign exchange rates.</p>
+</body></html>
+</TEXT>
+</DOCUMENT>
+<DOCUMENT>
+<TYPE>EX-21.1
+<SEQUENCE>2
+<FILENAME>ex21.htm
+<TEXT>
+<html><body><p>SUBSIDIARIES OF THE REGISTRANT. This exhibit must not be indexed.</p></body></html>
+</TEXT>
+</DOCUMENT>
+</SEC-DOCUMENT>

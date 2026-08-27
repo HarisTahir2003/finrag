@@ -1,0 +1,42 @@
+<SEC-DOCUMENT>0000000000-23-000001.txt : 20231103
+<SEC-HEADER>0000000000-23-000001.hdr.sgml : 20231103
+ACCESSION NUMBER:		0000000000-23-000001
+CONFORMED SUBMISSION TYPE:	10-K
+PUBLIC DOCUMENT COUNT:		2
+CONFORMED PERIOD OF REPORT:	20230930
+FILED AS OF DATE:		20231103
+FILER:
+	COMPANY DATA:
+		COMPANY CONFORMED NAME:			Apple Inc.
+		CENTRAL INDEX KEY:			0000320193
+</SEC-HEADER>
+<DOCUMENT>
+<TYPE>10-K
+<SEQUENCE>1
+<FILENAME>aapl-10k.htm
+<TEXT>
+<html><body>
+<p>Item 7. Management's Discussion and Analysis of Financial Condition and Results of Operations.</p>
+<p>Total net sales decreased 3% to $383,285 million during 2023. Research and development expense increased 14% to $29,915 million, driven primarily by an increase in headcount-related expenses and product development engineering costs.</p>
+<p>Item 8. Financial Statements and Supplementary Data.</p>
+<table>
+<tr><th>CONSOLIDATED STATEMENTS (in millions)</th><th>Current year</th><th>Prior year</th></tr>
+<tr><td>Total net sales</td><td>383,285</td><td>394,328</td></tr>
+<tr><td>Research and development</td><td>29,915</td><td>26,251</td></tr>
+<tr><td>Total current assets</td><td>143,566</td><td>135,405</td></tr>
+<tr><td>Inventories</td><td>6,331</td><td>4,946</td></tr>
+<tr><td>Total current liabilities</td><td>145,308</td><td>153,982</td></tr>
+</table>
+<p>Item 1A. Risk Factors. The Company's business is subject to intense competition across all markets for its products and services, characterised by aggressive price competition and rapid technological advances.</p>
+</body></html>
+</TEXT>
+</DOCUMENT>
+<DOCUMENT>
+<TYPE>EX-21.1
+<SEQUENCE>2
+<FILENAME>ex21.htm
+<TEXT>
+<html><body><p>SUBSIDIARIES OF THE REGISTRANT. This exhibit must not be indexed.</p></body></html>
+</TEXT>
+</DOCUMENT>
+</SEC-DOCUMENT>

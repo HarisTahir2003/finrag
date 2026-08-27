@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "finrag"
-version = "0.2.0"
+version = "0.3.0"
 description = "Agentic retrieval-augmented generation over SEC 10-K filings"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,6 +23,7 @@ dependencies = [
     "chromadb>=0.5",
     "pydantic>=2.10.0",
     "python-dotenv>=1.0.1",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +34,8 @@ google = ["langchain-google-genai>=2.0.0", "langchain-classic>=1.0.0"]
 # Structure-aware chunking.
 semantic = ["unstructured[html]>=0.18.0"]
 app = ["streamlit>=1.40.0"]
+# Scoring with an LLM judge, plus experiment tracking.
+eval = ["ragas>=0.2", "datasets>=2.20.0", "mlflow>=2.16"]
 dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
 
 [project.scripts]
@@ -40,6 +43,9 @@ finrag = "finrag.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"finrag.eval" = ["datasets/*.yaml"]
 
 [tool.ruff]
 line-length = 100

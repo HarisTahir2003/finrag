@@ -37,6 +37,23 @@ def main(argv: list[str] | None = None) -> int:
     p_ask = sub.add_parser("ask", help="ask the agent a question")
     p_ask.add_argument("question")
 
+    p_eval = sub.add_parser("eval", help="run an evaluation suite")
+    p_eval.add_argument("suite", choices=["retrieval", "ragas", "agent"])
+    p_eval.add_argument(
+        "--fixtures",
+        action="store_true",
+        help="build a throwaway index from the committed test fixtures (no downloads, no API key)",
+    )
+    p_eval.add_argument(
+        "--gate", action="store_true", help="exit non-zero if thresholds are breached"
+    )
+    p_eval.add_argument("--limit", type=int, help="evaluate only the first N cases")
+    p_eval.add_argument(
+        "--gold-context",
+        action="store_true",
+        help="ragas only: score against gold context instead of the retriever, reproducing the original measurement",
+    )
+
     args = parser.parse_args(argv)
     _configure_logging(args.verbose)
     settings = get_settings()
@@ -75,6 +92,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"chunks indexed     unavailable ({exc})")
         return 0
 
+    if args.command == "eval":
+        return _run_eval(args, settings)
+
     if args.command == "ask":
         from .agent import build_agent
 
@@ -84,6 +104,83 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     return 1
+
+
+def _fixture_index(settings):
+    """Index the committed fixtures into a temporary store.
+
+    Lets the retrieval suite run on a fresh clone with no EDGAR download and no
+    API key, which is what makes it usable as a CI gate.
+    """
+    import tempfile
+    from dataclasses import replace
+    from pathlib import Path
+
+    from .ingest.index import index_filings, open_store
+
+    fixtures = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "sec-edgar-filings"
+    paths = sorted(fixtures.glob("**/full-submission.txt"))
+    if not paths:
+        raise SystemExit(f"no fixtures found under {fixtures}")
+
+    # The fixtures are only a couple of KB each. At the production chunk size they
+    # would each index as a single chunk, so every filtered query would have exactly
+    # one candidate and hit rate and MRR would be 1.0 by construction -- a gate that
+    # cannot fail is not a gate. A smaller chunk size splits each filing into several
+    # passages so ranking is actually exercised.
+    tmp = Path(tempfile.mkdtemp(prefix="finrag-eval-"))
+    settings = replace(settings, data_root=tmp, chunk_size=400, chunk_overlap=60)
+    result = index_filings(paths=paths, settings=settings)
+    print(f"indexed {result['filings']} fixtures -> {result['chunks']} chunks\n")
+    return open_store(settings), settings
+
+
+def _run_eval(args, settings) -> int:
+    from .eval.tracking import config_params, track_run
+
+    store = None
+    if args.fixtures:
+        store, settings = _fixture_index(settings)
+
+    if args.suite == "retrieval":
+        from .eval.gate import check
+        from .eval.retrieval_eval import evaluate_retrieval
+
+        report = evaluate_retrieval(store=store, settings=settings)
+        print(report.format_table())
+        metrics = report.as_metrics()
+        with track_run("retrieval", config_params(settings)) as record:
+            record(metrics)
+        print("\n" + "\n".join(f"  {k:22} {v}" for k, v in metrics.items()))
+
+        if args.gate:
+            result = check(report)
+            print("\n" + result.format())
+            return 0 if result.passed else 1
+        return 0
+
+    if args.suite == "ragas":
+        from .eval.ragas_eval import evaluate_ragas
+
+        report = evaluate_ragas(
+            store=store, settings=settings, use_gold_context=args.gold_context, limit=args.limit
+        )
+        metrics = report.as_metrics()
+        with track_run(f"ragas-{report.context_source}", config_params(settings)) as record:
+            record(metrics)
+        print(f"\ncontext source: {report.context_source}")
+        print("\n".join(f"  {k:22} {v}" for k, v in metrics.items()))
+        return 0
+
+    from .eval.agent_eval import evaluate_agent
+
+    report = evaluate_agent(store=store, settings=settings, limit=args.limit)
+    print(report.format_table())
+    metrics = report.as_metrics()
+    with track_run("agent", config_params(settings)) as record:
+        record(metrics)
+    print("\n" + "\n".join(f"  {k:22} {v}" for k, v in metrics.items()))
+    return 0
 
 
 if __name__ == "__main__":

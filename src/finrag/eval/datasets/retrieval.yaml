@@ -1,0 +1,74 @@
+# Retrieval probes that need no LLM to score.
+#
+# Each case asks a question of one filing and names strings that must appear in
+# the retrieved passages. Scoring is exact substring matching, so results are
+# deterministic and free -- which is what makes this the CI quality gate.
+#
+# These run against the synthetic fixtures in tests/fixtures, so they can be
+# scored on a fresh clone with no downloads. Figures approximate the real
+# reported ones; the documents themselves are a few hundred bytes.
+
+dataset: fixtures
+description: Retrieval probes over the committed test fixtures.
+
+cases:
+  - id: aapl-2023-current-assets
+    query: total current assets and total current liabilities
+    ticker: AAPL
+    fiscal_year: 2023
+    expect_any: ["143,566", "145,308"]
+    note: Balance sheet line items, the input to a current-ratio question.
+
+  - id: aapl-2023-rnd
+    query: research and development expense
+    ticker: AAPL
+    fiscal_year: 2023
+    expect_any: ["29,915"]
+
+  - id: aapl-2023-competition
+    query: what risks does management identify around competition
+    ticker: AAPL
+    fiscal_year: 2023
+    expect_any: ["intense competition"]
+    note: Narrative retrieval rather than a table lookup.
+
+  - id: amzn-2022-net-loss
+    query: net income or loss for the year
+    ticker: AMZN
+    fiscal_year: 2022
+    expect_any: ["(2,722)", "2,722"]
+    note: >
+      The regression case. Amazon's FY2022 report was filed in February 2023, so
+      the old accession-number indexing filed it under year 2023 and this query
+      could not have matched it at all.
+
+  - id: amzn-2022-net-sales
+    query: total net sales revenue for the year
+    ticker: AMZN
+    fiscal_year: 2022
+    expect_any: ["513,983"]
+
+  - id: amzn-2022-fulfillment
+    query: why did management change the fulfillment network
+    ticker: AMZN
+    fiscal_year: 2022
+    expect_any: ["regionalization"]
+
+  - id: nvda-2024-cost-of-revenue
+    query: cost of revenue and inventories
+    ticker: NVDA
+    fiscal_year: 2024
+    expect_any: ["16,621", "5,282"]
+    note: Inputs to inventory turnover.
+
+  - id: nvda-2024-revenue
+    query: total revenue for the fiscal year
+    ticker: NVDA
+    fiscal_year: 2024
+    expect_any: ["60,922"]
+
+  - id: nvda-2024-supply-risk
+    query: what supply chain risks are disclosed
+    ticker: NVDA
+    fiscal_year: 2024
+    expect_any: ["manufacturing lead times", "export controls"]

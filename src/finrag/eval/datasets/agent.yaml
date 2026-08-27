@@ -1,0 +1,176 @@
+# The 20-question agent suite, carried over from the original notebook cell.
+#
+# Scoring needs an LLM, so this does not run in CI -- the retrieval dataset is
+# the gate. Run it with: finrag eval agent
+#
+# Years are FISCAL years. That mattered: the original run scored 60% functional
+# tool-call accuracy against a corpus where six of these ten tickers were indexed
+# under the wrong year, so the questions and the index disagreed.
+
+dataset: sec-10k-agent
+description: End-to-end questions over ten large-cap 10-K filings.
+
+cases:
+  - id: calc-aapl-2023-01
+    category: calc
+    ticker: AAPL
+    fiscal_year: 2023
+    question: "What is the current ratio for Apple in 2023?"
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "0.988 (current assets $143,566M / current liabilities $145,308M)"
+
+  - id: calc-amzn-2022-02
+    category: calc
+    ticker: AMZN
+    fiscal_year: 2022
+    question: "Calculate the net profit margin for Amazon in 2022."
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "-0.53% (net loss $2,722M / net sales $513,983M)"
+    note: "Under the old accession-number indexing this filing was labelled 2023, so a query for 2022 retrieved the wrong year entirely."
+
+  - id: calc-tsla-2023-03
+    category: calc
+    ticker: TSLA
+    fiscal_year: 2023
+    question: "What was the year-over-year growth in Tesla's total assets between 2022 and 2023?"
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "29.49% (2023 $106,618M vs 2022 $82,338M)"
+    note: "Requires two filings, so it exercises year filtering twice."
+
+  - id: calc-msft-2023-04
+    category: calc
+    ticker: MSFT
+    fiscal_year: 2023
+    question: "Calculate the debt-to-equity ratio for Microsoft for 2023."
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "0.229 (total debt $47,193M / total equity $206,223M)"
+
+  - id: calc-nvda-2024-05
+    category: calc
+    ticker: NVDA
+    fiscal_year: 2024
+    question: "What is the inventory turnover for Nvidia in fiscal 2024?"
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "3.18x (COGS $16,621M / average inventory $5,221M)"
+    note: "NVIDIA's fiscal 2024 ended in January 2024."
+
+  - id: narrative-meta-2023-06
+    category: narrative
+    ticker: META
+    fiscal_year: 2023
+    question: "What does management identify as the primary risk regarding competition in 2023?"
+    expected_tools: [search_10k_reports]
+    reference_answer: "Intense competition from short-form video platforms, alternative social networks, and shifts in Family of Apps engagement."
+
+  - id: narrative-googl-2022-07
+    category: narrative
+    ticker: GOOGL
+    fiscal_year: 2022
+    question: "Explain Google's strategy for AI investment as described in the 2022 MD&A."
+    expected_tools: [search_10k_reports]
+    reference_answer: "An AI-first focus, integrating generative AI into Search and Cloud and investing in DeepMind and high-performance compute infrastructure."
+
+  - id: narrative-nflx-2023-08
+    category: narrative
+    ticker: NFLX
+    fiscal_year: 2023
+    question: "What reasons does Netflix give for the change in its content spending strategy in 2023?"
+    expected_tools: [search_10k_reports]
+    reference_answer: "A focus on profitability and quality over quantity, compounded by production delays from industry strikes."
+
+  - id: narrative-v-2023-09
+    category: narrative
+    ticker: V
+    fiscal_year: 2023
+    question: "How does Visa describe the impact of cross-border travel recovery on its revenue?"
+    expected_tools: [search_10k_reports]
+    reference_answer: "Cross-border volume rose 22%, driving 29% growth in international transaction revenues as travel restrictions eased."
+
+  - id: narrative-jpm-2023-10
+    category: narrative
+    ticker: JPM
+    fiscal_year: 2023
+    question: "What are the key cybersecurity risks highlighted by JP Morgan in 2023?"
+    expected_tools: [search_10k_reports]
+    reference_answer: "AI-driven phishing, ransomware extortion, and vulnerabilities in third-party software supply chains."
+
+  - id: mixed-aapl-2023-11
+    category: mixed
+    ticker: AAPL
+    fiscal_year: 2023
+    question: "Did Apple's R&D as a percentage of sales increase in 2023, and what drove that change?"
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "Yes, to 7.8% from 6.7%, driven by headcount-related expenses and product development engineering costs."
+
+  - id: mixed-amzn-2023-12
+    category: mixed
+    ticker: AMZN
+    fiscal_year: 2023
+    question: "Calculate return on assets for 2023 and explain management's view on asset utilisation efficiency."
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "ROA about 6.12%. Management prioritised regionalisation of the fulfilment network to cut transport distances and improve unit efficiency."
+
+  - id: mixed-tsla-2022-13
+    category: mixed
+    ticker: TSLA
+    fiscal_year: 2022
+    question: "What was Tesla's gross margin in 2022, and what specific headwinds affected it?"
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "25.6%. Headwinds included lithium prices, raw material inflation, and ramping the Berlin and Austin factories."
+
+  - id: mixed-nvda-2024-14
+    category: mixed
+    ticker: NVDA
+    fiscal_year: 2024
+    question: "Analyse the change in NVIDIA's cash position from fiscal 2023 to 2024 and why it increased."
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "Cash and equivalents grew about $12.6B to $25.9B, driven by record Data Center revenue."
+
+  - id: mixed-meta-2023-15
+    category: mixed
+    ticker: META
+    fiscal_year: 2023
+    question: "How did the Family of Apps operating margin change in 2023, and what was the role of the Year of Efficiency?"
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "Margin rose from 34% to 47%, helped by a 22% headcount reduction and real estate consolidation."
+
+  - id: mixed-msft-2023-16
+    category: mixed
+    ticker: MSFT
+    fiscal_year: 2023
+    question: "What is the cloud revenue growth rate for 2023, and how does management explain Azure demand?"
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "22% growth to about $111B, attributed to a structural shift as customers migrated workloads to AI-optimised infrastructure."
+
+  - id: mixed-nflx-2022-17
+    category: mixed
+    ticker: NFLX
+    fiscal_year: 2022
+    question: "Calculate free cash flow for 2022 and explain why it differed from net income."
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "FCF about $1.6B against net income of $4.5B; the gap is non-cash amortisation of content assets versus cash spent on production."
+
+  - id: mixed-googl-2023-18
+    category: mixed
+    ticker: GOOGL
+    fiscal_year: 2023
+    question: "What was the effective tax rate in 2023, and what discrete tax items influenced it?"
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "About 14%, down from 16%, influenced by a $1.2B discrete benefit from a valuation allowance reversal and geographic income mix."
+
+  - id: mixed-v-2022-19
+    category: mixed
+    ticker: V
+    fiscal_year: 2022
+    question: "Calculate the dividend payout ratio and explain Visa's capital return philosophy."
+    expected_tools: [search_10k_reports, calculator]
+    reference_answer: "About 23%. Organic growth and acquisitions first, then consistent dividend growth and opportunistic buybacks."
+
+  - id: mixed-jpm-2022-20
+    category: mixed
+    ticker: JPM
+    fiscal_year: 2022
+    question: "What was the CET1 capital ratio in 2022, and how did the First Republic acquisition affect the outlook?"
+    expected_tools: [search_10k_reports]
+    reference_answer: "CET1 was 13.2%. The 2022 report does not mention First Republic, which was acquired in May 2023."
+    note: "A trap: a correct answer must say the 2022 filing cannot discuss a 2023 event. Tests year-filtering discipline."

@@ -7,6 +7,7 @@ on:
 
 jobs:
   test:
+    name: lint and unit tests
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -21,9 +22,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      # No API keys and no network calls to model providers: the suite runs on
-      # committed fixtures with the local embedding backend, so it works on a
-      # fork and for anyone who clones the repo.
+      # No API keys and no calls to model providers: the suite runs on committed
+      # fixtures, so it works on a fork and on a fresh clone.
       - name: Install
         run: |
           python -m pip install --upgrade pip
@@ -39,3 +39,45 @@ jobs:
         env:
           FINRAG_CHUNK_STRATEGY: recursive
         run: pytest --cov=finrag --cov-report=term-missing
+
+  quality-gate:
+    name: retrieval quality gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Local embeddings, so the gate needs no credentials and costs nothing.
+      # A gate that required a paid judge model would be a gate nobody could run.
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,local]"
+
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ hashFiles('pyproject.toml') }}
+
+      # Indexes the committed fixtures into a throwaway store, runs the labelled
+      # retrieval probes, and fails the build if hit rate, MRR or filter accuracy
+      # regress. filter_accuracy below 1.0 means chunks from the wrong company or
+      # fiscal year came back -- the bug this project started with.
+      - name: Retrieval gate
+        env:
+          FINRAG_CHUNK_STRATEGY: recursive
+        run: finrag eval retrieval --fixtures --gate
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: results/
+          if-no-files-found: ignore

@@ -33,8 +33,8 @@ def test_tables_become_markdown_rows():
 def test_table_values_stay_attached_to_their_labels(amzn_fy2022):
     """The reason tables are converted at all: a bare number is unretrievable."""
     text = parse_filing(amzn_fy2022)
-    assert "| Total current assets | 143,566 |" in text
-    assert "| Total current liabilities | 145,308 |" in text
+    assert "| Total net sales | 513,983 | 469,822 |" in text
+    assert "| Total current assets | 146,791 | 161,580 |" in text
 
 
 def test_scripts_and_styles_are_dropped():

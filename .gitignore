@@ -11,6 +11,10 @@ chroma_db*/
 sec-edgar-filings/
 *.parquet
 
+# ...but the test fixtures are miniature synthetic filings that MUST be
+# committed: the test suite and the CI quality gate both run against them.
+!tests/fixtures/**
+
 # ---- Python ----
 __pycache__/
 *.py[cod]
@@ -47,3 +51,6 @@ mlartifacts/
 .coverage
 coverage.xml
 htmlcov/
+
+# Evaluation output
+results/
