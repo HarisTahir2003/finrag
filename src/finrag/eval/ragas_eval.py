@@ -62,10 +62,16 @@ class RagasReport:
     samples: list[RagasSample] = field(default_factory=list)
     scores: dict[str, float] = field(default_factory=dict)
     context_source: str = "retrieved"
+    # Which model scored these answers. Recorded because a RAGAS number is only
+    # comparable against another produced by the same judge.
+    judge: str = ""
 
-    def as_metrics(self) -> dict[str, float]:
-        metrics = {f"ragas_{k}": round(v, 4) for k, v in self.scores.items()}
+    def as_metrics(self) -> dict[str, float | str]:
+        metrics: dict[str, float | str] = {
+            f"ragas_{k}": round(v, 4) for k, v in self.scores.items()
+        }
         metrics["samples"] = len(self.samples)
+        metrics["judge"] = self.judge
         return metrics
 
 
@@ -178,7 +184,7 @@ def evaluate_ragas(
 
     from ..cache import enable_llm_cache
     from ..embeddings import get_embeddings
-    from ..llm import build_with_fallbacks
+    from ..llm import build_with_fallbacks, get_judge_model
 
     settings = settings or get_settings()
     cases = cases if cases is not None else load_agent_cases()
@@ -187,6 +193,8 @@ def evaluate_ragas(
 
     enable_llm_cache(settings)
     llm = build_with_fallbacks(settings)
+    judge, judge_label = get_judge_model(settings)
+    log.info("generator=%s judge=%s", settings.llm_backend, judge_label)
 
     if store is None and not use_gold_context:
         from ..ingest.index import open_store
@@ -211,12 +219,15 @@ def evaluate_ragas(
     result = evaluate(
         dataset,
         metrics=[faithfulness, answer_relevancy, context_precision],
-        llm=LangchainLLMWrapper(llm),
+        llm=LangchainLLMWrapper(judge),
         embeddings=LangchainEmbeddingsWrapper(get_embeddings(settings)),
         run_config=RunConfig(timeout=300, max_retries=10, max_wait=60, max_workers=1),
     )
 
     scores = {k: float(v) for k, v in dict(result).items() if isinstance(v, (int, float))}
     return RagasReport(
-        samples=samples, scores=scores, context_source="gold" if use_gold_context else "retrieved"
+        samples=samples,
+        scores=scores,
+        context_source="gold" if use_gold_context else "retrieved",
+        judge=judge_label,
     )

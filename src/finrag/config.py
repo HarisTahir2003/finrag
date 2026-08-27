@@ -69,9 +69,24 @@ class Settings:
         default_factory=lambda: _env("FINRAG_MAX_CONTEXT_TOKENS", "auto")
     )
 
+    # The model that SCORES answers in the RAGAS suite, as opposed to producing
+    # them. Blank means "same as llm_backend", which is fine for a single run
+    # but invalid for a cross-backend comparison: each backend would mark its
+    # own homework, and any ranking would partly measure judge self-preference
+    # rather than answer quality. Pin one judge across every run being compared.
+    judge_backend: str = field(default_factory=lambda: _env("FINRAG_JUDGE_BACKEND", ""))
+    judge_model: str = field(default_factory=lambda: _env("FINRAG_JUDGE_MODEL", ""))
+
     # Overrides the preset base URL for OpenAI-compatible backends. Point this
     # at a self-hosted vLLM or LM Studio server to use one.
     openai_base_url: str = field(default_factory=lambda: _env("FINRAG_OPENAI_BASE_URL", ""))
+
+    # Google Cloud Vertex AI. Authenticates with Application Default
+    # Credentials rather than an API key, and bills the Cloud billing account
+    # -- so promotional credits apply, which the AI Studio API cannot use on a
+    # prepay account.
+    gcp_project: str = field(default_factory=lambda: _env("GOOGLE_CLOUD_PROJECT", ""))
+    gcp_location: str = field(default_factory=lambda: _env("GOOGLE_CLOUD_LOCATION", "us-central1"))
 
     # Local models via Ollama.
     ollama_base_url: str = field(
@@ -106,9 +121,19 @@ class Settings:
         agent scratchpad inside an 8K window.
         """
         raw = self.max_context_tokens_raw.strip().lower()
-        if raw == "auto":
-            return 6000 if self.llm_backend.lower() in ("cerebras", "github") else 0
-        return int(raw)
+        if raw != "auto":
+            return int(raw)
+
+        backend = self.llm_backend.lower()
+        if backend in ("cerebras", "github"):
+            return 6000
+        if backend == "ollama":
+            # Ollama is the one backend whose ceiling truncates silently rather
+            # than erroring, so an overflow presents as the model ignoring its
+            # context. Two fifths of the window leaves room for the system
+            # prompt, tool schemas, the agent scratchpad and the reply.
+            return (self.ollama_context_length * 2) // 5
+        return 0
 
     @property
     def filings_dir(self) -> Path:

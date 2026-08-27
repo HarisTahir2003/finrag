@@ -15,19 +15,40 @@ judge retries most of all.
 from __future__ import annotations
 
 import logging
+import re
 
 from .config import Settings, get_settings
 
 log = logging.getLogger(__name__)
 
-_enabled = False
+# The backend and model whose cache is currently installed, or None. Tracked so
+# that switching backends mid-process re-points the cache instead of silently
+# reusing the previous one.
+_installed: str | None = None
+
+
+def cache_path(settings: Settings):
+    """Where this backend and model's cache lives.
+
+    One file per (backend, model) rather than one shared file, because
+    LangChain's cache key is whatever the client reports via
+    ``_get_llm_string()`` and not every client includes the model. ChatOllama
+    reports ``[('_type', 'chat-ollama'), ('stop', None)]`` for every model it
+    serves, so a single shared cache would hand qwen3:4b's answers back for a
+    llama3.3:70b query -- and in a backend comparison, one model's output would
+    be published under another's name. Namespacing by file sidesteps the whole
+    class of problem rather than trusting each client to key correctly.
+    """
+    from .llm import default_model_for
+
+    model = settings.chat_model or default_model_for(settings.llm_backend)
+    slug = re.sub(r"[^a-z0-9]+", "-", f"{settings.llm_backend}-{model}".lower()).strip("-")
+    return settings.data_root / f"llm_cache-{slug}.db"
 
 
 def enable_llm_cache(settings: Settings | None = None) -> bool:
-    """Turn on the SQLite-backed LLM cache. Idempotent. Returns True if active."""
-    global _enabled
-    if _enabled:
-        return True
+    """Turn on the SQLite-backed LLM cache. Returns True if active."""
+    global _installed
 
     settings = settings or get_settings()
     if not settings.llm_cache:
@@ -40,9 +61,12 @@ def enable_llm_cache(settings: Settings | None = None) -> bool:
         log.warning("langchain-community not installed; LLM cache disabled")
         return False
 
+    path = cache_path(settings)
+    if _installed == str(path):
+        return True
+
     settings.data_root.mkdir(parents=True, exist_ok=True)
-    path = settings.data_root / "llm_cache.db"
     set_llm_cache(SQLiteCache(database_path=str(path)))
-    _enabled = True
+    _installed = str(path)
     log.info("LLM cache on: %s", path)
     return True

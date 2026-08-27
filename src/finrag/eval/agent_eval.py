@@ -21,11 +21,32 @@ from .schema import AgentCase, load_agent_cases
 log = logging.getLogger(__name__)
 
 # Phrases the agent uses when it has failed to extract the company or year.
+# Anchored to interrogative or imperative forms so a model *narrating* its
+# reasoning ("I established which company and which fiscal year") is not scored
+# as having asked for information it already had. The system prompt hands the
+# model that exact vocabulary, so an unanchored match measures verbosity.
 _CLARIFICATION = re.compile(
-    r"(which company|what is the ticker|provide the ticker|need a (stock )?ticker|"
-    r"which fiscal year|please provide)",
+    r"(?:^|[.?!]\s+|\n)\s*(?:"
+    r"which company|what (?:is|was) the ticker|please provide|could you (?:provide|specify)|"
+    r"i need (?:a|the) (?:stock )?ticker|what ticker|which fiscal year"
+    r")",
     re.I,
 )
+
+# LangChain returns this verbatim when an agent exhausts max_iterations. It is
+# not an answer, but it arrives in the same field as one -- and the agent will
+# have called its tools on the way, so without this check a model that thrashed
+# for fifteen turns and converged on nothing scores a full tool-path success on
+# the headline ranking metric.
+_NO_ANSWER_SENTINELS = (
+    "agent stopped due to iteration limit",
+    "agent stopped due to max iterations",
+)
+
+# handle_parsing_errors=True surfaces malformed tool calls as a pseudo-tool of
+# this name. Counting it as a real call would hide exactly the failure mode that
+# most distinguishes these providers: reliability of tool-call formatting.
+_PARSE_ERROR_TOOL = "_Exception"
 
 
 @dataclass
@@ -40,21 +61,51 @@ class AgentCaseResult:
         return bool(_CLARIFICATION.search(self.answer))
 
     @property
+    def gave_up(self) -> bool:
+        """The agent hit its iteration limit instead of producing an answer."""
+        lowered = self.answer.lower()
+        return any(sentinel in lowered for sentinel in _NO_ANSWER_SENTINELS)
+
+    @property
+    def malformed_tool_calls(self) -> int:
+        """Tool calls the model emitted in a shape the framework could not parse."""
+        return sum(1 for t in self.tools_called if t == _PARSE_ERROR_TOOL)
+
+    @property
     def tool_path_ok(self) -> bool:
-        """Every expected tool was called at least once."""
+        """Every expected tool was called, and the run produced an answer.
+
+        The second half matters: calling both tools and then looping until the
+        iteration limit is a failure, not a success, however good the trace
+        looks.
+        """
+        if self.error is not None or self.gave_up:
+            return False
         return all(t in self.tools_called for t in self.case.expected_tools)
 
     @property
     def used_calculator_when_required(self) -> bool:
         """Arithmetic must be computed, not recalled."""
+        if self.error is not None or self.gave_up:
+            return False
         if "calculator" not in self.case.expected_tools:
             return True
         return "calculator" in self.tools_called
 
     @property
     def cited_a_figure(self) -> bool:
-        """A weak but LLM-free signal that the answer is grounded in numbers."""
-        return bool(re.search(r"\d", self.answer))
+        """A weak but LLM-free signal that the answer is grounded in numbers.
+
+        Requires something shaped like a reported financial quantity -- a
+        multi-digit or decimal number, a percentage, or a currency amount --
+        rather than any digit at all. Matching a bare digit made this read
+        95-100% for every backend, including ones that said they found nothing,
+        leaving it with no discriminating signal while acting as a ranking
+        tie-breaker.
+        """
+        if self.error is not None or self.gave_up:
+            return False
+        return bool(re.search(r"\d[\d,]*\.?\d*\s*%|[$£€]\s*\d|\d[\d,]{2,}|\d+\.\d+", self.answer))
 
 
 @dataclass
@@ -72,6 +123,8 @@ class AgentReport:
             ),
             "clarification_requests": round(self._rate(lambda r: r.asked_for_clarification), 4),
             "answered_with_figures": round(self._rate(lambda r: r.cited_a_figure), 4),
+            "gave_up": round(self._rate(lambda r: r.gave_up), 4),
+            "malformed_tool_calls": sum(r.malformed_tool_calls for r in self.results),
             "errors": sum(1 for r in self.results if r.error),
             "cases": len(self.results),
         }

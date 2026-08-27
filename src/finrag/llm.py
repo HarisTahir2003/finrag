@@ -18,6 +18,15 @@ whichever provider the author happened to have credits with:
     roughly 3GB of RAM, an 8B closer to 6GB, and long retrieval contexts add
     more on top.
 
+``vertex``
+    Gemini through Google Cloud Vertex AI rather than the AI Studio API. Two
+    reasons it is separate: it authenticates with Application Default
+    Credentials instead of an API key, and it bills the Cloud billing account
+    directly -- which means Google Cloud promotional credits are consumed
+    before anything else. The AI Studio path cannot reach those credits at all
+    on a prepay account, so for anyone holding promo credits this is the free
+    door to the same models.
+
 ``cerebras`` / ``openrouter`` / ``together`` / ``fireworks`` / ``deepinfra`` /
 ``openai`` / ``github``
     OpenAI-compatible endpoints -- one client, differing only by base URL,
@@ -56,10 +65,18 @@ DEFAULT_MODELS = {
     # means the agent invents a number instead of retrieving one.
     "ollama": "qwen3:4b",
     "groq": "llama-3.3-70b-versatile",
+    "vertex": "gemini-2.5-flash",
 }
 
-# Backends that need no credentials at all.
-KEYLESS_BACKENDS = frozenset({"ollama"})
+# Applied uniformly to every provider. Free tiers 429 under load even when
+# paced, and the comparison table ranks on `errors`, so an uneven retry policy
+# would score client libraries rather than models.
+MAX_RETRIES = 6
+
+# Backends that read no API key from the environment. ollama needs nothing at
+# all; vertex authenticates with Application Default Credentials, set up once
+# with `gcloud auth application-default login`.
+KEYLESS_BACKENDS = frozenset({"ollama", "vertex"})
 
 # Default client-side requests-per-minute per backend, sized a little under each
 # free tier's published cap so the limit is never *hit*, only approached. Free
@@ -70,6 +87,7 @@ DEFAULT_RPM: dict[str, float | None] = {
     "anthropic": None,
     "google": None,
     "ollama": None,  # local: the bottleneck is the machine, not a quota
+    "vertex": None,  # Cloud quotas are per-project and generous; manage in GCP
     "groq": 25,  # free tier ~30 RPM
     "cerebras": 25,  # free tier ~30 RPM
     "openrouter": 18,  # free models ~20 RPM
@@ -174,7 +192,12 @@ def get_chat_model(settings: Settings | None = None, **overrides: Any) -> Any:
         return _openai_compatible(backend, settings, **overrides)
 
     model = settings.chat_model or DEFAULT_MODELS.get(backend, "")
-    params = {"temperature": 0, **overrides}
+    # max_retries is set here rather than per-branch so every provider gets the
+    # same policy. Left to library defaults it varies (2 on some clients, 6 on
+    # others), and since `errors` is a ranked column in the comparison table a
+    # backend would be penalised for its client library's retry policy rather
+    # than its own reliability.
+    params = {"temperature": 0, "max_retries": MAX_RETRIES, **overrides}
     limiter = _rate_limiter(backend, settings)
     if limiter is not None:
         params.setdefault("rate_limiter", limiter)
@@ -205,6 +228,23 @@ def get_chat_model(settings: Settings | None = None, **overrides: Any) -> Any:
         params.setdefault("max_tokens", settings.max_output_tokens)
         return ChatGroq(model=model, **params)
 
+    if backend == "vertex":
+        try:
+            from langchain_google_vertexai import ChatVertexAI
+        except ImportError as exc:
+            raise ImportError("The Vertex backend needs: pip install 'finrag[vertex]'") from exc
+        if not settings.gcp_project:
+            raise RuntimeError(
+                "GOOGLE_CLOUD_PROJECT is not set. The Vertex backend bills a Cloud project, "
+                "so it must know which one. Set it in .env, and authenticate once with: "
+                "gcloud auth application-default login"
+            )
+        params.setdefault("max_output_tokens", settings.max_output_tokens)
+        params.setdefault("project", settings.gcp_project)
+        params.setdefault("location", settings.gcp_location)
+        params.pop("max_tokens", None)
+        return ChatVertexAI(model=model, **params)
+
     if backend == "ollama":
         try:
             from langchain_ollama import ChatOllama
@@ -215,7 +255,15 @@ def get_chat_model(settings: Settings | None = None, **overrides: Any) -> Any:
         # model ignoring its context rather than never having received it.
         params.setdefault("num_ctx", settings.ollama_context_length)
         params.setdefault("base_url", settings.ollama_base_url)
+        # Ollama names the output limit num_predict and defaults it to about
+        # 128 tokens. Dropping max_tokens without translating it left local
+        # models answering in a fraction of the space every other backend got
+        # -- a comparison would have measured that truncation, not the model.
+        params.setdefault("num_predict", settings.max_output_tokens)
         params.pop("max_tokens", None)
+        # Retries are handled by the caller for local models; the parameter is
+        # not part of the ChatOllama signature.
+        params.pop("max_retries", None)
         return ChatOllama(model=model, **params)
 
     raise ValueError(f"unknown llm backend {backend!r}; expected one of {all_backends()}")
@@ -240,10 +288,7 @@ def _openai_compatible(backend: str, settings: Settings, **overrides: Any) -> An
     params: dict[str, Any] = {
         "temperature": 0,
         "max_tokens": settings.max_output_tokens,
-        # Free tiers 429 under load even when paced; bounded retries with the
-        # provider SDK's own backoff mop up what the rate limiter cannot see
-        # (server-side token-per-minute accounting, shared-IP contention).
-        "max_retries": 6,
+        "max_retries": MAX_RETRIES,
         **overrides,
     }
     limiter = _rate_limiter(backend, settings)
@@ -285,6 +330,28 @@ def build_with_fallbacks(settings: Settings | None = None, **overrides: Any) -> 
         for name in names
     ]
     return primary.with_fallbacks(fallbacks)
+
+
+def get_judge_model(settings: Settings | None = None, **overrides: Any) -> tuple[Any, str]:
+    """The model used to SCORE answers, and a label naming it.
+
+    Defaults to the generating backend, which is fine in isolation. For a
+    cross-backend comparison it must be pinned to one provider via
+    FINRAG_JUDGE_BACKEND: otherwise every backend judges its own output, and
+    the resulting ranking measures judge self-preference as much as answer
+    quality. The returned label is recorded alongside the metrics so a reader
+    can tell which regime produced a given number.
+    """
+    settings = settings or get_settings()
+    backend = (settings.judge_backend or settings.llm_backend).lower()
+    model = settings.judge_model or (
+        settings.chat_model
+        if backend == settings.llm_backend.lower() and not settings.judge_backend
+        else ""
+    )
+    judge_settings = replace(settings, llm_backend=backend, chat_model=model)
+    label = f"{backend}/{model or default_model_for(backend)}"
+    return get_chat_model(judge_settings, **overrides), label
 
 
 def all_backends() -> list[str]:

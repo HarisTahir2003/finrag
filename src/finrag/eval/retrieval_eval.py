@@ -98,7 +98,18 @@ class RetrievalReport:
 
 def evaluate_case(case: RetrievalCase, store=None, settings: Settings | None = None) -> CaseResult:
     settings = settings or get_settings()
-    found = search_filing(case.query, case.ticker, case.fiscal_year, store=store, settings=settings)
+    # No context budget: this suite measures the retriever, and the budget is a
+    # property of the chat backend. Applying it here would make the CI gate's
+    # hit rate and MRR depend on FINRAG_LLM_BACKEND -- a retrieval regression
+    # and a provider switch would look identical.
+    found = search_filing(
+        case.query,
+        case.ticker,
+        case.fiscal_year,
+        store=store,
+        settings=settings,
+        apply_context_budget=False,
+    )
 
     wrong = sum(
         1

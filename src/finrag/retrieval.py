@@ -99,8 +99,17 @@ def search_filing(
     fiscal_year: int,
     store=None,
     settings: Settings | None = None,
+    apply_context_budget: bool = True,
 ) -> Retrieved:
-    """Search one company's filing for one fiscal year."""
+    """Search one company's filing for one fiscal year.
+
+    ``apply_context_budget`` trims the result to what the configured chat model
+    can accept. That is right when feeding an LLM and wrong when measuring the
+    retriever: the budget is derived from ``llm_backend``, so leaving it on
+    would make the LLM-free retrieval metrics -- and therefore the CI quality
+    gate -- move when the chat provider changed. The retrieval suite passes
+    False so it measures ranking rather than configuration.
+    """
     settings = settings or get_settings()
     if store is None:
         from .ingest.index import open_store
@@ -113,5 +122,6 @@ def search_filing(
     except Exception as exc:  # noqa: BLE001 - surfaced to the agent as text, not raised
         log.error("retrieval failed for %s FY%s: %s", ticker, fiscal_year, exc)
         docs = []
-    docs = trim_to_token_budget(docs, settings.max_context_tokens)
+    if apply_context_budget:
+        docs = trim_to_token_budget(docs, settings.max_context_tokens)
     return Retrieved(documents=docs, ticker=ticker.upper(), fiscal_year=int(fiscal_year))

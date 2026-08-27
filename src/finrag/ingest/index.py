@@ -86,6 +86,21 @@ def documents_for_filing(path: str | Path, settings: Settings | None = None) -> 
     ]
 
 
+def _delete_filing(store, ticker: str, fiscal_year: int) -> int:
+    """Remove every chunk already indexed for one filing. Returns how many."""
+    where = {"$and": [{"ticker": ticker}, {"year": int(fiscal_year)}]}
+    try:
+        existing = store._collection.get(where=where, include=[])
+        ids = existing.get("ids") or []
+        if ids:
+            store._collection.delete(ids=ids)
+            log.debug("%s FY%s: removed %d stale chunks", ticker, fiscal_year, len(ids))
+        return len(ids)
+    except Exception as exc:  # noqa: BLE001 - a failed clean-up must not stop ingest
+        log.warning("could not clear existing chunks for %s FY%s: %s", ticker, fiscal_year, exc)
+        return 0
+
+
 def index_filings(
     paths: list[Path] | None = None, settings: Settings | None = None
 ) -> dict[str, int]:
@@ -111,11 +126,19 @@ def index_filings(
         if not docs:
             continue
 
+        # Replace, do not merely upsert. Chunk ids hash the chunk's text, so
+        # re-indexing after a chunk_size or chunk_strategy change produces a
+        # disjoint id set: the upsert adds a second chunking of the filing
+        # while the first stays behind. The collection then holds the same
+        # filing twice at two granularities, which inflates every retrieval and
+        # is invisible except as a doubled chunk count.
+        first = docs[0].metadata
+        _delete_filing(store, first["ticker"], first["year"])
+
         for start in range(0, len(docs), EMBED_BATCH_SIZE):
             batch = docs[start : start + EMBED_BATCH_SIZE]
             store.add_documents(batch, ids=[d.metadata["id"] for d in batch])
 
-        first = docs[0].metadata
         log.info("%s FY%s: %d chunks", first["ticker"], first["year"], len(docs))
         total_chunks += len(docs)
         indexed += 1

@@ -41,8 +41,19 @@ def test_ollama_needs_no_key(monkeypatch):
 
 
 def test_every_backend_has_a_default_model():
-    assert set(DEFAULT_MODELS) == {"anthropic", "google", "groq", "ollama"}
+    """Asserted as a subset, not an exact set: adding a backend is a routine
+    change and should not break an unrelated test."""
+    assert {"anthropic", "google", "groq", "ollama", "vertex"} <= set(DEFAULT_MODELS)
     assert all(v for v in DEFAULT_MODELS.values())
+
+
+def test_every_backend_has_an_rpm_policy():
+    """A backend missing from DEFAULT_RPM silently runs unthrottled, which on a
+    free tier means 429s rather than pacing."""
+    from finrag.llm import DEFAULT_RPM, PROVIDER_PRESETS
+
+    for backend in set(DEFAULT_MODELS) | set(PROVIDER_PRESETS):
+        assert backend in DEFAULT_RPM, backend
 
 
 def test_builds_an_ollama_client_without_credentials(monkeypatch):

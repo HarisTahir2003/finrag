@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
 
 from .config import DEFAULT_TICKERS, get_settings
@@ -65,6 +66,18 @@ def main(argv: list[str] | None = None) -> int:
         "that died on a free tier's daily quota finish later without repeating calls",
     )
 
+    p_cmp = sub.add_parser("compare", help="run one suite across several backends and rank them")
+    p_cmp.add_argument(
+        "--backends",
+        required=True,
+        help="comma-separated, e.g. groq,cerebras,vertex,github",
+    )
+    p_cmp.add_argument("--suite", choices=["agent", "ragas"], default="agent")
+    p_cmp.add_argument("--fixtures", action="store_true", help="use the committed test fixtures")
+    p_cmp.add_argument("--dataset", default=None, help="named case set, e.g. 'smoke'")
+    p_cmp.add_argument("--limit", type=int, help="first N cases only")
+    p_cmp.add_argument("--resume", action="store_true", help="keep per-backend checkpoints")
+
     args = parser.parse_args(argv)
     _configure_logging(args.verbose)
     settings = get_settings()
@@ -106,6 +119,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "eval":
         return _run_eval(args, settings)
 
+    if args.command == "compare":
+        return _run_compare(args, settings)
+
     if args.command == "ask":
         from .agent import build_agent
 
@@ -146,6 +162,62 @@ def _fixture_index(settings):
     return open_store(settings), settings
 
 
+def _run_compare(args, settings) -> int:
+    """Sweep one suite across backends and print a ranking table."""
+    import json
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    from .cache import enable_llm_cache
+    from .eval.compare import compare_backends
+
+    store = None
+    if args.fixtures:
+        store, settings = _fixture_index(settings)
+
+    cases = None
+    if args.dataset:
+        from .eval.schema import DATASETS_DIR, load_agent_cases
+
+        cases = load_agent_cases(DATASETS_DIR / f"{args.dataset}.yaml")
+
+    enable_llm_cache(settings)
+    backends = [b.strip().lower() for b in args.backends.split(",") if b.strip()]
+
+    if args.suite == "ragas" and not settings.judge_backend:
+        # Without a pinned judge every backend scores its own answers, so the
+        # ranking would partly measure self-preference rather than quality.
+        print("WARNING: FINRAG_JUDGE_BACKEND is unset, so each backend will judge its own")
+        print("         answers. Pin one judge before publishing a RAGAS comparison.")
+        print()
+
+    report = compare_backends(
+        backends,
+        suite=args.suite,
+        cases=cases,
+        store=store,
+        settings=settings,
+        limit=args.limit,
+        resume=args.resume,
+        dataset=args.dataset or "default",
+        corpus="fixtures" if args.fixtures else "real",
+    )
+
+    print("\n" + report.as_markdown())
+    winner = report.winner()
+    if winner:
+        score = winner.score(report.rank_key)
+        print(f"\nBest on {report.rank_key}: {winner.backend} ({winner.model}) at {score:.0%}")
+        print(f"Promote with: FINRAG_LLM_BACKEND={winner.backend}")
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out = Path("results") / f"compare-{args.suite}-{stamp}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report.as_dict(), indent=2), encoding="utf-8")
+    print(f"\nWritten to {out}")
+    return 0
+
+
 def _run_eval(args, settings) -> int:
     from pathlib import Path
 
@@ -163,11 +235,22 @@ def _run_eval(args, settings) -> int:
 
         cases = load_agent_cases(DATASETS_DIR / f"{args.dataset}.yaml")
 
-    # Checkpoints use a stable path per suite so --resume can find them. A
-    # fresh (non-resume) run starts clean rather than inheriting stale cases.
+    # Checkpoints are keyed by suite AND backend AND resolved model. Keying on
+    # suite alone would let a resumed cerebras run silently inherit answers a
+    # groq run had already checkpointed, reporting one backend's output as
+    # another's -- which is exactly the corruption a cross-backend comparison
+    # cannot survive. A fresh (non-resume) run starts clean rather than
+    # inheriting stale cases.
     checkpoint_path = None
     if args.suite in ("ragas", "agent"):
-        checkpoint_path = Path("results") / f"{args.suite}-cases.jsonl"
+        from .llm import default_model_for
+
+        model = settings.chat_model or default_model_for(settings.llm_backend)
+        dataset = args.dataset or "default"
+        slug = re.sub(
+            r"[^a-z0-9]+", "-", f"{settings.llm_backend}-{model}-{dataset}".lower()
+        ).strip("-")
+        checkpoint_path = Path("results") / f"{args.suite}-{slug}-cases.jsonl"
         if not args.resume and checkpoint_path.exists():
             checkpoint_path.unlink()
 
@@ -187,6 +270,16 @@ def _run_eval(args, settings) -> int:
             print("\n" + result.format())
             return 0 if result.passed else 1
         return 0
+
+    if args.gate and args.suite != "retrieval":
+        # Accepting the flag and exiting 0 regardless would report a passing
+        # gate on a suite that has none, which is worse than refusing.
+        print(
+            f"--gate is only implemented for the retrieval suite; '{args.suite}' has no "
+            "thresholds. Its scores depend on a live model, so a pass/fail bar would be "
+            "flaky rather than a gate."
+        )
+        return 2
 
     if args.suite == "ragas":
         from .eval.ragas_eval import evaluate_ragas

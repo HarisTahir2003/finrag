@@ -39,6 +39,9 @@ google = ["langchain-google-genai>=2.0.0", "langchain-classic>=1.0.0"]
 groq = ["langchain-groq>=0.2", "langchain-classic>=1.0.0"]
 # Open-weight models running locally. No key, no rate limit, no cost.
 ollama = ["langchain-ollama>=0.2", "langchain-classic>=1.0.0"]
+# Gemini via Google Cloud Vertex AI -- the path that can spend Google Cloud
+# promotional credits, which the AI Studio API cannot on a prepay account.
+vertex = ["langchain-google-vertexai>=2.0.0", "langchain-classic>=1.0.0"]
 # One client for every OpenAI-compatible endpoint: Cerebras, OpenRouter,
 # Together, Fireworks, DeepInfra, OpenAI, or a self-hosted vLLM server.
 openai-compatible = ["langchain-openai>=0.2", "langchain-classic>=1.0.0"]

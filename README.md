@@ -104,6 +104,14 @@ context adds more.
 **Commercial APIs** — `anthropic` (`claude-haiku-4-5-20251001`) and `google` (`gemini-2.5-flash`).
 Most reliable tool calling, paid per token.
 
+**`vertex`** — the same Gemini models through Google Cloud Vertex AI rather than the AI Studio API.
+It exists because the two bill differently: Vertex charges the Cloud billing account directly, so
+**Google Cloud promotional credits are consumed first** — credits the AI Studio API cannot reach at
+all on a prepay account. Authenticates with Application Default Credentials
+(`gcloud auth application-default login`) rather than a key. Note it is postpaid: credits running
+out does not stop the meter, so set a budget alert and know that disabling billing on the project
+is the actual kill switch.
+
 `FINRAG_EMBEDDINGS` is separate and defaults to `local`, so **indexing is free on every one of
 these**. Only answering questions and the LLM-scored evaluations are billable, and on the two
 open-weight backends not even those.
@@ -202,7 +210,33 @@ dominant failure mode in the original run, tracked separately because it is a pr
 than a reasoning one.
 
 Every run is logged to `results/` as JSON, and to MLflow when it is installed, alongside the
-configuration that produced it.
+configuration that produced it — including the backend and the *resolved* model name, since
+`FINRAG_CHAT_MODEL` is normally blank and means "this backend's default".
+
+### Comparing backends
+
+```bash
+finrag compare --backends groq,cerebras,vertex,github --suite agent
+```
+
+Runs one suite across several providers and prints a ranking table ready to paste into a README,
+plus a JSON record in `results/`. Three things make the ranking mean what it appears to mean:
+
+- **Exactly one variable changes.** The corpus, chunking, retrieval depth, case set and context
+  budget are held identical and printed under the table. `FINRAG_CHAT_MODEL` is cleared per
+  backend, because a model id from one provider is meaningless to another.
+- **No model marks its own homework.** The agent suite scores purely on string and tool-trace
+  checks — there is no judge to be biased. For the RAGAS suite, set `FINRAG_JUDGE_BACKEND` to pin
+  one judge across every run; leave it unset and the command warns you, because each backend would
+  otherwise score its own answers.
+- **Ties break on something real.** Ranking is by tool-path accuracy, then by whether an answer
+  containing figures actually came back, then by how often the model asked for a ticker it was
+  already given. A backend can call both tools perfectly on every question and still be useless if
+  every reply was "which company did you mean?" — one metric would rank it joint first.
+
+Each backend gets its own checkpoint file keyed by backend *and* resolved model, so a sweep
+interrupted by one provider's daily quota resumes with `--resume` and no risk of one backend
+inheriting another's answers.
 
 ### Tests
 

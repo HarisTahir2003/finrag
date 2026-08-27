@@ -241,7 +241,7 @@ def test_agent_eval_resumes_without_repeating_calls(tmp_path):
 def test_cache_respects_the_kill_switch(monkeypatch):
     import finrag.cache as cache_module
 
-    monkeypatch.setattr(cache_module, "_enabled", False)
+    monkeypatch.setattr(cache_module, "_installed", None)
     monkeypatch.setenv("FINRAG_LLM_CACHE", "0")
     assert cache_module.enable_llm_cache(get_settings()) is False
 
@@ -250,17 +250,43 @@ def test_cache_enables_and_is_idempotent(monkeypatch, tmp_path):
     pytest.importorskip("langchain_community")
     import finrag.cache as cache_module
 
-    monkeypatch.setattr(cache_module, "_enabled", False)
+    monkeypatch.setattr(cache_module, "_installed", None)
     monkeypatch.setenv("FINRAG_LLM_CACHE", "1")
     monkeypatch.setenv("FINRAG_DATA_ROOT", str(tmp_path))
-    assert cache_module.enable_llm_cache(get_settings()) is True
-    assert (tmp_path / "llm_cache.db").exists()
-    assert cache_module.enable_llm_cache(get_settings()) is True
+    monkeypatch.setenv("FINRAG_LLM_BACKEND", "groq")
+    settings = get_settings()
+
+    assert cache_module.enable_llm_cache(settings) is True
+    # The file is namespaced by backend and model, not a single shared db.
+    assert cache_module.cache_path(settings).exists()
+    assert cache_module.enable_llm_cache(settings) is True
 
     from langchain_core.globals import get_llm_cache, set_llm_cache
 
     assert get_llm_cache() is not None
     set_llm_cache(None)  # do not leak global state into other tests
+
+
+def test_switching_backend_repoints_the_cache(monkeypatch, tmp_path):
+    """A process that evaluates two backends in turn -- which is exactly what
+    `finrag compare` does -- must not keep the first backend's cache installed."""
+    pytest.importorskip("langchain_community")
+    import finrag.cache as cache_module
+
+    monkeypatch.setattr(cache_module, "_installed", None)
+    monkeypatch.setenv("FINRAG_DATA_ROOT", str(tmp_path))
+
+    monkeypatch.setenv("FINRAG_LLM_BACKEND", "groq")
+    cache_module.enable_llm_cache(get_settings())
+    first = cache_module._installed
+
+    monkeypatch.setenv("FINRAG_LLM_BACKEND", "cerebras")
+    cache_module.enable_llm_cache(get_settings())
+    assert cache_module._installed != first
+
+    from langchain_core.globals import set_llm_cache
+
+    set_llm_cache(None)
 
 
 # ---- smoke dataset ----------------------------------------------------------

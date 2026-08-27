@@ -36,6 +36,7 @@ def config_params(settings: Any) -> dict[str, Any]:
     """The settings worth recording alongside a metric."""
     raw = asdict(settings) if is_dataclass(settings) else dict(settings)
     keep = (
+        "llm_backend",
         "embedding_backend",
         "local_embedding_model",
         "google_embedding_model",
@@ -44,9 +45,33 @@ def config_params(settings: Any) -> dict[str, Any]:
         "chunk_size",
         "chunk_overlap",
         "retrieval_k",
+        "max_output_tokens",
         "collection_name",
+        "requests_per_minute",
+        "llm_fallbacks",
     )
-    return {k: str(raw[k]) for k in keep if k in raw}
+    params = {k: str(raw[k]) for k in keep if k in raw}
+
+    # chat_model is usually "" -- it means "use whatever this backend defaults
+    # to". Recording only the blank leaves a result file that cannot say which
+    # model produced it, which would make a cross-backend comparison table
+    # unreadable. Resolve and record the actual model name.
+    backend = raw.get("llm_backend", "")
+    if backend:
+        try:
+            from ..llm import default_model_for
+
+            params["resolved_model"] = raw.get("chat_model") or default_model_for(backend)
+        except Exception:  # noqa: BLE001 - tracking must never break a run
+            pass
+
+    # Also resolved, because "auto" means different budgets on different
+    # backends -- 6000 tokens on cerebras/github, unlimited elsewhere. Two runs
+    # recording max_context_tokens_raw="auto" are not comparable.
+    if hasattr(settings, "max_context_tokens"):
+        params["max_context_tokens"] = str(settings.max_context_tokens)
+
+    return params
 
 
 @contextmanager
