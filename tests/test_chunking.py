@@ -60,7 +60,9 @@ def test_semantic_chunking_handles_inline_xbrl():
     """
     pytest.importorskip("unstructured.partition.html")
 
-    body = "".join(f"<p>Total net sales increased {i} percent year over year.</p>" for i in range(80))
+    body = "".join(
+        f"<p>Total net sales increased {i} percent year over year.</p>" for i in range(80)
+    )
     wrapped = (
         "\n<XBRL>\n<?xml version='1.0' encoding='ASCII'?>\n"
         "<!--XBRL Document Created with the Workiva Platform-->\n"

@@ -65,8 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         "--years",
         type=int,
         default=5,
-        help="how many of the most recent fiscal years to fetch per ticker "
-        "(default: %(default)s)",
+        help="how many of the most recent fiscal years to fetch per ticker (default: %(default)s)",
     )
 
     sub.add_parser("index", help="parse and index downloaded filings (idempotent)")

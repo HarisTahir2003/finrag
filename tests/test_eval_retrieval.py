@@ -126,7 +126,11 @@ def test_search_uses_the_raw_query_unless_expansion_is_enabled(monkeypatch):
     assert seen[-1] == "total net sales", "default must send the question as asked"
 
     search_filing(
-        "total net sales", "AAPL", 2024, store=_Store(), settings=replace(base, query_expansion=True)
+        "total net sales",
+        "AAPL",
+        2024,
+        store=_Store(),
+        settings=replace(base, query_expansion=True),
     )
     assert seen[-1].startswith("total net sales ")
     assert "balance sheet" in seen[-1], "enabling the flag must restore the expansion"
