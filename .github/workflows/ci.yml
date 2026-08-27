@@ -83,17 +83,20 @@ jobs:
           if-no-files-found: ignore
 
   llm-smoke:
-    name: agent smoke test (GitHub Models)
+    name: agent smoke test (Groq)
     runs-on: ubuntu-latest
-    # An LLM's output is not deterministic, and the free tier can be saturated
-    # by other users of the shared quota -- so this job reports rather than
-    # blocks. The deterministic retrieval gate above stays the required check.
+    # An LLM's output is not deterministic and a free tier can be exhausted, so
+    # this job reports rather than blocks. The deterministic retrieval gate
+    # above stays the required check.
     continue-on-error: true
-    # models: read lets the built-in GITHUB_TOKEN call GitHub Models -- an
-    # end-to-end agent run in CI with zero repository secrets, on forks too.
     permissions:
       contents: read
-      models: read
+    # This used to run on GitHub Models, whose built-in GITHUB_TOKEN needed no
+    # repository secret and worked on forks too. GitHub retired that service on
+    # 30 July 2026, so the job now needs a GROQ_API_KEY secret and skips
+    # cleanly without one -- which is what forks and fresh clones will see.
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 
     steps:
       - uses: actions/checkout@v4
@@ -106,7 +109,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,local,openai-compatible]"
+          pip install -e ".[dev,local,groq]"
 
       - name: Cache the embedding model
         uses: actions/cache@v4
@@ -115,13 +118,14 @@ jobs:
           key: hf-${{ hashFiles('pyproject.toml') }}
 
       # Three fixture-answerable questions through the real tool-calling agent.
-      # GitHub Models' free tier allows ~150 requests/day on mini-class models
-      # with 8K-token requests, which is exactly smoke-test sized; the context
-      # trimmer (FINRAG_MAX_CONTEXT_TOKENS=auto) keeps requests under that lid.
+      # Groq's free tier meters 8,000 tokens per minute, and an agent resends
+      # its scratchpad at every step, so the context trimmer
+      # (FINRAG_MAX_CONTEXT_TOKENS=auto) is what keeps a three-case run inside
+      # one minute's budget.
       - name: Agent smoke suite
+        if: env.GROQ_API_KEY != ''
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FINRAG_LLM_BACKEND: github
+          FINRAG_LLM_BACKEND: groq
           FINRAG_CHUNK_STRATEGY: recursive
           FINRAG_RETRIEVAL_K: "6"
         run: finrag eval agent --fixtures --dataset smoke

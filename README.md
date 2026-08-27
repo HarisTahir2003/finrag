@@ -125,16 +125,26 @@ codebase:
 | Free-tier failure mode | What handles it |
 |---|---|
 | Per-minute rate caps (429s) | A client-side token-bucket limiter paces every call under each tier's published RPM — defaults per backend in `DEFAULT_RPM`, override with `FINRAG_RPM`. Never hitting the limit beats recovering from it. |
-| Request-size ceilings (GitHub Models enforces ~8K per request as a hard 400; Groq meters 8K per *minute*, which an agent's growing scratchpad hits just as fast) | Retrieved context is trimmed to a token budget before it reaches the model (`FINRAG_MAX_CONTEXT_TOKENS=auto`), dropping the lowest-ranked whole chunks instead of failing the call. |
+| Request-size ceilings (Groq meters 8K per *minute*, which an agent's growing scratchpad reaches faster than any single prompt would) | Retrieved context is trimmed to a token budget before it reaches the model (`FINRAG_MAX_CONTEXT_TOKENS=auto`), dropping the lowest-ranked whole chunks instead of failing the call. |
 | Daily quotas dying mid-run | Every completed evaluation case is checkpointed to `results/<suite>-cases.jsonl` as it finishes; rerun with `--resume` and only the unfinished cases spend quota. Failed cases are deliberately not checkpointed, so they retry. |
 | Re-running while iterating | Identical LLM calls are served from a SQLite cache (`data/llm_cache.db`, on by default) — an unchanged re-run costs zero tokens. RAGAS judge calls benefit most. |
 | One provider's quota too small | `FINRAG_LLM_FALLBACKS=groq,openrouter` chains providers on the plain-chat paths, making the usable budget the union of the tiers. |
 | RAGAS's own concurrency | The judge runs with `RunConfig(max_workers=1)` plus bounded retries — the default of 16 concurrent workers is a guaranteed 429 on any free tier. |
 
-The split that works: **Groq** for both interactive asking and batch evaluation, **GitHub Models**
-for CI (the built-in `GITHUB_TOKEN` can call it once the workflow requests `permissions: models:
-read` — the `llm-smoke` job runs a real agent evaluation on every push with zero repository
-secrets), and **Ollama** offline. None needs a card.
+The split that works: **Vertex AI** when answer quality matters, billed against Google Cloud
+credits rather than a card; **Groq** for everything else, including batch evaluation; and
+**Ollama** offline. The `llm-smoke` CI job runs a real agent evaluation on every push when a
+`GROQ_API_KEY` secret is present, and skips cleanly when it is not.
+
+Two backends that used to be part of this story are gone, and it is worth knowing why before
+planning around any free tier:
+
+| Backend | Status |
+|---|---|
+| GitHub Models | Retired 30 July 2026. The built-in `GITHUB_TOKEN` could call it with no repository secret at all, which made it uniquely good for CI. Nothing replaces that property. |
+| Cerebras | No-card free tier ended 17 August 2026; accounts now need a payment method to unlock $5 of expiring credits. The backend still works with a paid key. |
+
+Both are still implemented. Neither is a zero-cost option any more.
 
 Groq carries the batch work because of how its two limits differ: 1,000 requests per day is
 generous — a 20-case agent suite is about 100 calls — while 8,000 tokens per minute is tight, so
