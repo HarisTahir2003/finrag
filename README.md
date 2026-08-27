@@ -9,20 +9,30 @@ Ask it *"what was Apple's current ratio in 2023?"* and it retrieves the balance-
 extracts the two figures, and runs the division — rather than guessing a plausible-looking number,
 which is the usual failure mode when an LLM is asked to do arithmetic on a document.
 
-> **Status: v0.1 — research code being turned into a deployable system.**
-> This began as a coursework notebook. It works, and its measured results are recorded in
-> [`docs/baseline-results.md`](docs/baseline-results.md), but there is a known correctness bug and
-> the evaluation does not yet measure what it should. Both are documented below and are the first
-> items on the roadmap. Read [Known limitations](#known-limitations) before quoting any number
-> from this repository.
+> **Status: v0.2 — packaged and correct; evaluation is next.**
+> This began as a coursework notebook. The logic now lives in an installable, tested package, and
+> the fiscal-year bug that corrupted six of the ten default tickers is fixed. What has *not* been
+> redone is the evaluation: the numbers in [`docs/baseline-results.md`](docs/baseline-results.md)
+> were produced by the old pipeline and one of them does not measure what it appears to. See
+> [Known limitations](#known-limitations) before quoting any figure from this repository.
 
 ## What is in here
 
 | Path | What it is |
 |---|---|
-| `Part3.ipynb` | The system: EDGAR download, HTML-to-markdown table parsing, semantic indexing into Chroma, and a tool-calling agent with retrieval and calculator tools. |
-| `app.py` | Streamlit chat interface over the agent. |
-| `docs/baseline-results.md` | Measured results, with caveats. |
+| `src/finrag/config.py` | Environment-driven settings. Every value has a working default. |
+| `src/finrag/ingest/metadata.py` | Fiscal-year resolution from the SEC submission header. |
+| `src/finrag/ingest/parse.py` | Extracts the 10-K from a submission, renders tables as markdown. |
+| `src/finrag/ingest/index.py` | Chunking and idempotent upsert into Chroma. |
+| `src/finrag/chunking.py` | Structure-aware or fixed-width chunking. |
+| `src/finrag/embeddings.py` | Local (sentence-transformers) or Google embedding backends. |
+| `src/finrag/retrieval.py` | Filtered search, query expansion, reciprocal rank fusion. |
+| `src/finrag/calculator.py` | AST-whitelisted arithmetic — the agent's calculator tool. |
+| `src/finrag/agent.py` | Tool-calling agent over retrieval + calculator. |
+| `src/finrag/cli.py` | `finrag download / index / status / ask`. |
+| `Part3.ipynb` | Narrative walkthrough of the pipeline, importing from the package. |
+| `app.py` | Streamlit chat interface. |
+| `tests/` | 70 tests over parsing, fiscal years, chunk identity and calculator safety. |
 
 The original coursework project had two further modules — extractive QnA over FinanceBench, and
 earnings-call summarization on ECTSum. Neither is part of this repository, which is the SEC filing
@@ -40,10 +50,15 @@ git clone https://github.com/HarisTahir2003/finrag.git
 cd finrag
 
 python3 -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e ".[local,semantic,google,app,dev]"
 
-cp .env.example .env       # then fill in GOOGLE_API_KEY and SEC_CONTACT_EMAIL
+cp .env.example .env       # then fill in SEC_CONTACT_EMAIL, and GOOGLE_API_KEY for the agent
 ```
+
+The default embedding backend is **local** (`sentence-transformers/all-MiniLM-L6-v2`), so
+downloading, indexing, retrieval and the whole test suite run with **no API key and no per-call
+cost**. A key is only needed to download from EDGAR (a contact address, not a paid key) and to run
+the agent itself. Set `FINRAG_EMBEDDINGS=google` for the higher-quality embedding path.
 
 Two environment variables matter:
 
@@ -58,51 +73,58 @@ elsewhere.
 
 ## Running it
 
-Work through `Part3.ipynb` in order: download filings, build the index, then query the agent.
-The download and indexing steps are slow and cost money in embedding calls, but only need to run
-once.
+```bash
+finrag download --tickers AAPL,AMZN --years 2   # fetch from EDGAR
+finrag index                                    # parse, chunk, embed (idempotent)
+finrag status                                   # configuration and index size
+finrag ask "What was Apple's current ratio in fiscal 2023?"
+```
 
-With an index built, the Streamlit app gives you a chat interface over the same agent:
+Indexing is safe to re-run: chunk IDs are derived from ticker, fiscal year, position and content,
+so unchanged filings are rewritten in place rather than duplicated.
+
+`Part3.ipynb` walks through the same steps with commentary, and the Streamlit app gives you a chat
+interface over the agent:
 
 ```bash
 streamlit run app.py
 ```
 
+### Tests
+
+```bash
+pytest
+```
+
+70 tests, no API key and no network required — they run against committed SEC-format fixtures.
+
 ## Known limitations
 
-Being explicit about these because two of them affect numbers that could otherwise be quoted out
-of context.
+**1. The evaluation does not measure the retrieval pipeline.** The RAGAS run recorded in
+`docs/baseline-results.md` feeds FinanceBench's gold evidence in as context instead of calling the
+retriever, so faithfulness of 0.7393 describes how faithfully the generator uses *perfect* context
+— a prompt-engineering result, not a retrieval one. Nothing in this repository currently produces
+an honest end-to-end number. This is the whole of the next milestone.
 
-**1. Fiscal year metadata is wrong for calendar-year companies.** The year attached to each chunk
-comes from the accession number, which encodes when the filing was *submitted*, not the fiscal
-year it covers. A December-year-end company files its FY2022 report in early 2023, so it is
-indexed as 2023. This affects AMZN, GOOGL, META, TSLA, NFLX and JPM. AAPL, MSFT, V and NVDA happen
-to be correct because their fiscal years end before December. Any year-filtered query against the
-first group returns the wrong report.
+**2. The recorded numbers predate the fixes.** They were produced by the old pipeline, including
+the incorrect fiscal years, and with fixed-width rather than structure-aware chunking. They are
+kept as a baseline to improve on, not as a description of the current system.
 
-**2. The RAGAS evaluation in Part 1 is not end-to-end.** It feeds FinanceBench's gold evidence in
-as context instead of calling the retriever, so it measures how faithfully the generator uses
-*perfect* context, not how the retrieval pipeline performs. The faithfulness figure of 0.7393
-should be read that way.
+**3. Coverage is uneven.** Parsing, fiscal-year resolution, chunk identity and calculator safety
+are well covered. The agent, CLI and retrieval modules are not, because they need a live model or
+a populated index; they are exercised by the evaluation harness instead, which is v0.3 work.
 
-**3. "Semantic element partitioning" is imported but not used.** `partition_html` and
-`chunk_by_title` are imported in Part 3 and never called; the active path is BeautifulSoup
-followed by fixed 3000-character splitting.
-
-**4. The calculator tool executes model-generated Python.** It combines `eval()` with a Python
-REPL tool. Fine in a local notebook, not acceptable for anything publicly reachable.
-
-**5. Ingestion is not idempotent.** `Chroma.from_documents` is called inside the per-file loop, so
-re-running the indexing step duplicates the corpus rather than updating it.
-
-**6. There are no tests and no CI.**
+**4. Fiscal-year labelling assumes the common convention.** The fiscal year is taken to be the
+calendar year in which the period ends. This is correct for all ten default tickers, but some
+retailers label a year ending in early February as the *previous* fiscal year. Add such companies
+to `FISCAL_YEAR_OVERRIDES` in `src/finrag/ingest/metadata.py`.
 
 ## Roadmap
 
-- **v0.2 — correctness and packaging.** Resolve fiscal year from the filing's
-  `CONFORMED PERIOD OF REPORT` header. Move the notebook code into an installable `src/finrag/`
-  package. Make ingestion idempotent with deterministic chunk IDs. Replace the calculator with an
-  AST-whitelisted evaluator. Unit tests and CI.
+- ~~**v0.2 — correctness and packaging.**~~ **Done.** Fiscal year resolved from
+  `CONFORMED PERIOD OF REPORT`. Notebook code moved into an installable `src/finrag/` package.
+  Ingestion made idempotent with deterministic chunk IDs. Calculator replaced with an
+  AST-whitelisted evaluator. 70 unit tests and CI on Python 3.10 and 3.12.
 - **v0.3 — honest evaluation.** Run RAGAS end-to-end through the retriever. Track every run with
   MLflow. Add a CI gate that fails the build when retrieval quality regresses.
 - **v0.4 — deployment.** Dockerfile, FastAPI service, rewritten Streamlit app, live demo.
