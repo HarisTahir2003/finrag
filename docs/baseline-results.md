@@ -1,8 +1,14 @@
-# Baseline results (v0.1)
+# Baseline results (v0.1 — historical)
 
 These are the numbers the original coursework notebooks actually produced, recovered from the
 committed cell outputs before those outputs were stripped from the repository. They are recorded
 here so the evidence survives, and so later work has something to be measured against.
+
+> **These predate every fix in v0.2 and v0.3.** They were produced with incorrect fiscal years for
+> six of the ten tickers, fixed-width chunking, and — for Part 1 — evaluation against gold context
+> rather than the retriever. Treat them as a historical baseline, not as a description of the
+> current system. Reproduce the old Part 1 measurement with `finrag eval ragas --gold-context`, and
+> the honest one by dropping the flag.
 
 **Read the caveats.** Two of the three modules measure something narrower than the headline number
 suggests.
