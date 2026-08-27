@@ -98,3 +98,35 @@ def test_metrics_are_rounded_for_logging():
     assert metrics["hit_rate"] == 1.0
     assert metrics["cases"] == 1
     assert metrics["empty_retrievals"] == 0
+
+
+def test_query_expansion_is_off_by_default():
+    """It halved hit rate on the real corpus; see retrieval.expand_query."""
+    from finrag.config import Settings
+
+    assert Settings().query_expansion is False
+
+
+def test_search_uses_the_raw_query_unless_expansion_is_enabled(monkeypatch):
+    """The knob has to actually reach the vector store, not just exist."""
+    from dataclasses import replace
+
+    from finrag.config import Settings
+    from finrag.retrieval import search_filing
+
+    seen: list[str] = []
+
+    class _Store:
+        def similarity_search(self, query, k, filter):  # noqa: A002 - langchain's name
+            seen.append(query)
+            return []
+
+    base = Settings()
+    search_filing("total net sales", "AAPL", 2024, store=_Store(), settings=base)
+    assert seen[-1] == "total net sales", "default must send the question as asked"
+
+    search_filing(
+        "total net sales", "AAPL", 2024, store=_Store(), settings=replace(base, query_expansion=True)
+    )
+    assert seen[-1].startswith("total net sales ")
+    assert "balance sheet" in seen[-1], "enabling the flag must restore the expansion"

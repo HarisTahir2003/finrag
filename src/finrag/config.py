@@ -65,6 +65,12 @@ class Settings:
     # Trim retrieved context to a token budget before it reaches the model.
     # "auto" resolves per backend: free tiers with hard request-size ceilings
     # (Cerebras 8K, GitHub Models 8K-in) get 6000, everything else unlimited.
+    # Off by default because it was measured, not assumed. See
+    # retrieval.expand_query: on the real corpus it halved hit rate.
+    query_expansion: bool = field(
+        default_factory=lambda: _env("FINRAG_QUERY_EXPANSION", "").lower() in ("1", "true", "yes")
+    )
+
     max_context_tokens_raw: str = field(
         default_factory=lambda: _env("FINRAG_MAX_CONTEXT_TOKENS", "auto")
     )

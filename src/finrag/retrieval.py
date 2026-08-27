@@ -37,6 +37,26 @@ class Retrieved:
 
 
 def expand_query(query: str) -> str:
+    """Append financial-statement vocabulary to a query. Off by default.
+
+    Inherited from the notebook, where the claim that it helps was asserted
+    rather than measured. Measured here on the indexed corpus, over fifteen
+    cases whose target string was confirmed present in the filing first:
+
+                            hit_rate    mrr
+        with expansion         0.533   0.283
+        without                1.000   0.822
+
+    It never once improved a ranking and lost the answer completely in seven
+    cases. The reason is visible in the text it produces -- "total net sales
+    financial statements balance sheet results of operations management
+    discussion" -- where nine words of generic boilerplate swamp three words of
+    actual question, and the nearest neighbours become narrative prose that
+    talks *about* the financial statements rather than the statement itself.
+
+    Kept behind FINRAG_QUERY_EXPANSION so the experiment can be re-run rather
+    than taken on faith, which is how it got in.
+    """
     expanded = f"{query} {_QUERY_EXPANSION}"
     if any(hint in query.lower() for hint in _NARRATIVE_HINTS):
         expanded = f"{expanded} {_NARRATIVE_EXPANSION}"
@@ -118,7 +138,8 @@ def search_filing(
 
     where = {"$and": [{"ticker": ticker.upper()}, {"year": int(fiscal_year)}]}
     try:
-        docs = store.similarity_search(expand_query(query), k=settings.retrieval_k, filter=where)
+        search_text = expand_query(query) if settings.query_expansion else query
+        docs = store.similarity_search(search_text, k=settings.retrieval_k, filter=where)
     except Exception as exc:  # noqa: BLE001 - surfaced to the agent as text, not raised
         log.error("retrieval failed for %s FY%s: %s", ticker, fiscal_year, exc)
         docs = []
