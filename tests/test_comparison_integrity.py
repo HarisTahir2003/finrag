@@ -39,7 +39,8 @@ def test_context_budget_varies_by_backend_when_left_on_auto(monkeypatch):
         for b in ("groq", "cerebras", "github", "vertex")
     }
     assert budgets["cerebras"] == 6000
-    assert budgets["groq"] == 0
+    assert budgets["groq"] == 2000
+    assert budgets["vertex"] == 0
     assert len(set(budgets.values())) > 1, "auto really does differ per backend"
 
 
@@ -48,7 +49,10 @@ def test_sweep_resolves_to_the_most_restrictive_budget(monkeypatch):
     monkeypatch.setenv("FINRAG_MAX_CONTEXT_TOKENS", "auto")
     settings = get_settings()
     budget = shared_context_budget(["groq", "cerebras", "vertex"], settings)
-    assert budget == 6000, "cerebras' 8K ceiling binds the whole sweep"
+    assert budget == 2000, "groq's 8,000 TPM is the tightest ceiling in this sweep"
+
+    # And with groq out, the next tightest takes over rather than going unlimited.
+    assert shared_context_budget(["cerebras", "vertex"], settings) == 6000
 
     pinned = [
         replace(settings, llm_backend=b, max_context_tokens_raw=str(budget)).max_context_tokens
@@ -59,7 +63,7 @@ def test_sweep_resolves_to_the_most_restrictive_budget(monkeypatch):
 
 def test_budget_is_unlimited_when_no_backend_constrains_it(monkeypatch):
     monkeypatch.setenv("FINRAG_MAX_CONTEXT_TOKENS", "auto")
-    assert shared_context_budget(["groq", "vertex"], get_settings()) == 0
+    assert shared_context_budget(["anthropic", "vertex"], get_settings()) == 0
 
 
 def test_ollama_constrains_the_sweep_by_its_context_window(monkeypatch):
@@ -69,7 +73,7 @@ def test_ollama_constrains_the_sweep_by_its_context_window(monkeypatch):
     monkeypatch.setenv("FINRAG_OLLAMA_NUM_CTX", "16384")
     settings = get_settings()
     assert replace(settings, llm_backend="ollama").max_context_tokens == 6553
-    assert shared_context_budget(["groq", "vertex", "ollama"], settings) == 6553
+    assert shared_context_budget(["anthropic", "vertex", "ollama"], settings) == 6553
 
 
 def test_explicit_budget_is_respected_by_the_sweep(monkeypatch):

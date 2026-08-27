@@ -127,6 +127,17 @@ class Settings:
         backend = self.llm_backend.lower()
         if backend in ("cerebras", "github"):
             return 6000
+        if backend == "groq":
+            # Groq meters tokens per minute, not per request: the free tier
+            # allows 8,000 TPM on every tool-calling model it offers. That is a
+            # tighter constraint than it looks, because an agent resends its
+            # whole scratchpad on each step -- a question answered in three
+            # steps pays for its retrieved context roughly three times over. A
+            # single measured request came to 8,806 tokens of which only 2,204
+            # were retrieved context; the rest was accumulated history. 2000
+            # keeps each tool result small enough that three of them plus the
+            # system prompt still fit inside one minute's budget.
+            return 2000
         if backend == "ollama":
             # Ollama is the one backend whose ceiling truncates silently rather
             # than erroring, so an overflow presents as the model ignoring its

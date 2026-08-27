@@ -64,7 +64,14 @@ DEFAULT_MODELS = {
     # which matters more here than raw quality because a dropped tool call
     # means the agent invents a number instead of retrieving one.
     "ollama": "qwen3:4b",
-    "groq": "llama-3.3-70b-versatile",
+    # Hosted model ids rot. Groq retired the whole llama-3.3 line, and a
+    # retired id is a 404 at call time, not a warning at startup -- so this
+    # constant is worth re-checking against `GET /openai/v1/models` whenever
+    # the agent suddenly stops working. gpt-oss-120b is also what the cerebras
+    # preset serves, which is a happy accident for `finrag compare`: holding
+    # the model fixed across the two backends makes the provider the variable
+    # under test rather than a confound.
+    "groq": "openai/gpt-oss-120b",
     "vertex": "gemini-2.5-flash",
 }
 
@@ -88,7 +95,12 @@ DEFAULT_RPM: dict[str, float | None] = {
     "google": None,
     "ollama": None,  # local: the bottleneck is the machine, not a quota
     "vertex": None,  # Cloud quotas are per-project and generous; manage in GCP
-    "groq": 25,  # free tier ~30 RPM
+    # Groq publishes 1,000 RPM and 8,000 TPM on the free tier, so requests are
+    # never the binding limit -- tokens are, and this limiter counts requests.
+    # An agent step carrying trimmed context costs roughly 1.5-3k tokens, so
+    # four per minute is about what 8,000 TPM will bear. Raise FINRAG_RPM if
+    # you are on a paid tier; the 429s this avoids are token 429s.
+    "groq": 4,
     "cerebras": 25,  # free tier ~30 RPM
     "openrouter": 18,  # free models ~20 RPM
     "github": 8,  # free tier ~10 RPM

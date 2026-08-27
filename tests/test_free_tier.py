@@ -28,8 +28,10 @@ def test_free_backends_get_a_default_limiter(monkeypatch):
     monkeypatch.delenv("FINRAG_RPM", raising=False)
     llm = get_chat_model(get_settings())
     assert llm.rate_limiter is not None
-    # 25 requests/minute, expressed as requests/second.
-    assert llm.rate_limiter.requests_per_second == pytest.approx(25 / 60)
+    # 4 requests/minute, expressed as requests/second. Groq's published RPM is
+    # 1000; the limit that actually bites is 8,000 tokens/minute, and this
+    # request-counting limiter approximates it by pacing requests.
+    assert llm.rate_limiter.requests_per_second == pytest.approx(4 / 60)
 
 
 def test_finrag_rpm_overrides_the_default(monkeypatch):
@@ -161,7 +163,12 @@ def test_auto_budget_follows_the_backend(monkeypatch):
     assert get_settings().max_context_tokens == 6000
     monkeypatch.setenv("FINRAG_LLM_BACKEND", "github")
     assert get_settings().max_context_tokens == 6000
+    # Groq meters tokens per minute rather than per request, and an agent
+    # resends its scratchpad every step, so it needs a budget too.
     monkeypatch.setenv("FINRAG_LLM_BACKEND", "groq")
+    assert get_settings().max_context_tokens == 2000
+    # A backend with no free-tier ceiling still resolves to unlimited.
+    monkeypatch.setenv("FINRAG_LLM_BACKEND", "anthropic")
     assert get_settings().max_context_tokens == 0
 
 

@@ -85,7 +85,7 @@ calls are answering questions and running the LLM-scored evaluations.
 | `FINRAG_LLM_BACKEND` | Default model | Key |
 |---|---|---|
 | `cerebras` | `gpt-oss-120b` | `CEREBRAS_API_KEY` |
-| `groq` | `llama-3.3-70b-versatile` | `GROQ_API_KEY` |
+| `groq` | `openai/gpt-oss-120b` | `GROQ_API_KEY` |
 | `github` | `openai/gpt-4o-mini` | `GITHUB_TOKEN` |
 | `openrouter` | `meta-llama/llama-3.3-70b-instruct` | `OPENROUTER_API_KEY` |
 | `together` | `meta-llama/Llama-3.3-70B-Instruct-Turbo` | `TOGETHER_API_KEY` |
