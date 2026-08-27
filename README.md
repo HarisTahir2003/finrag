@@ -78,21 +78,44 @@ Anthropic publishes no embedding model. Embeddings default to local sentence-tra
 **indexing all fifty filings costs nothing** whichever chat provider you use — the only billable
 calls are answering questions and running the LLM-scored evaluations.
 
-| `FINRAG_LLM_BACKEND` | Default model | Needs | Cost |
-|---|---|---|---|
-| `ollama` | `qwen3:4b` | `ollama serve`, ~3GB RAM | **free, unlimited, offline** |
-| `groq` | `llama-3.3-70b-versatile` | free API key, no card | **free**, rate limited per minute |
-| `anthropic` | `claude-haiku-4-5-20251001` | API key | ~$1/$5 per M tokens |
-| `google` | `gemini-2.5-flash` | API key | ~$0.30/$2.50 per M tokens |
+**Open-weight models, hosted** — someone else's hardware, nothing on yours:
+
+| `FINRAG_LLM_BACKEND` | Default model | Key |
+|---|---|---|
+| `cerebras` | `gpt-oss-120b` | `CEREBRAS_API_KEY` |
+| `groq` | `llama-3.3-70b-versatile` | `GROQ_API_KEY` |
+| `openrouter` | `meta-llama/llama-3.3-70b-instruct` | `OPENROUTER_API_KEY` |
+| `together` | `meta-llama/Llama-3.3-70B-Instruct-Turbo` | `TOGETHER_API_KEY` |
+| `fireworks` | `llama-v3p3-70b-instruct` | `FIREWORKS_API_KEY` |
+| `deepinfra` | `meta-llama/Llama-3.3-70B-Instruct` | `DEEPINFRA_API_KEY` |
+
+All six speak the OpenAI chat-completions protocol, so they share one client and differ only by
+base URL, default model and key variable. Adding another — or pointing at a self-hosted vLLM or
+LM Studio server via `FINRAG_OPENAI_BASE_URL` — is one entry in `PROVIDER_PRESETS`, not one more
+backend.
+
+**Open-weight models, local** — `ollama`, default `qwen3:4b`. No key, no rate limit, no network,
+no cost. Bounded by RAM: a 4B model at 4-bit wants roughly 3GB, an 8B closer to 6GB, and retrieval
+context adds more.
+
+**Commercial APIs** — `anthropic` (`claude-haiku-4-5-20251001`) and `google` (`gemini-2.5-flash`).
+Most reliable tool calling, paid per token.
 
 `FINRAG_EMBEDDINGS` is separate and defaults to `local`, so **indexing is free on every one of
 these**. Only answering questions and the LLM-scored evaluations are billable, and on the two
 open-weight backends not even those.
 
-Two things to know when running open-weight models. Groq's free tier caps tokens per *minute*, and
-a default retrieval of 20 chunks will breach it — set `FINRAG_RETRIEVAL_K=6` or lower. Ollama needs
-`FINRAG_OLLAMA_NUM_CTX` to exceed the retrieved context plus the agent scratchpad, or it truncates
-the prompt without telling you, which looks like the model ignoring its context.
+Three things to know when running open-weight models:
+
+- **Free tiers cap tokens per minute**, and a default retrieval of 20 chunks will breach most of
+  them. Set `FINRAG_RETRIEVAL_K=6` or lower.
+- **Tool calling is the thing to test first**, not general quality. This agent must call a
+  retrieval tool and a calculator; a model that silently drops a tool call answers from memory and
+  invents a figure, which is worse than refusing. Reliability varies a lot across open models, and
+  free variants on aggregators are often the weakest.
+- **Ollama truncates prompts** longer than `num_ctx` without reporting it, which presents as the
+  model ignoring its context rather than never having received it. `FINRAG_OLLAMA_NUM_CTX` defaults
+  to 16384.
 
 Retrieval depth is the main cost and rate-limit lever throughout: `FINRAG_RETRIEVAL_K=8` roughly
 halves tokens per call against the default of 20.

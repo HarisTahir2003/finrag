@@ -26,6 +26,8 @@ nothing and needs no key at all.
 
 from __future__ import annotations
 
+import os
+from dataclasses import dataclass
 from typing import Any
 
 from .config import Settings, get_settings
@@ -48,6 +50,53 @@ DEFAULT_MODELS = {
 KEYLESS_BACKENDS = frozenset({"ollama"})
 
 
+@dataclass(frozen=True)
+class Preset:
+    """An OpenAI-compatible endpoint serving open-weight models."""
+
+    base_url: str
+    default_model: str
+    key_env: str
+    note: str = ""
+
+
+# Every one of these speaks the OpenAI chat-completions protocol, so they run
+# through the same client and differ only in these three fields.
+PROVIDER_PRESETS: dict[str, Preset] = {
+    "cerebras": Preset(
+        "https://api.cerebras.ai/v1",
+        "gpt-oss-120b",
+        "CEREBRAS_API_KEY",
+        "Free tier is generous on daily tokens, which suits batch evaluation.",
+    ),
+    "openrouter": Preset(
+        "https://openrouter.ai/api/v1",
+        "meta-llama/llama-3.3-70b-instruct",
+        "OPENROUTER_API_KEY",
+        "One key, many models. Append ':free' to a model id for the free variants, "
+        "but check tool calling works on the specific model first -- it is unreliable "
+        "on several of them, and a dropped tool call means an invented number.",
+    ),
+    "together": Preset(
+        "https://api.together.xyz/v1",
+        "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        "TOGETHER_API_KEY",
+        "Broadest open-weight catalogue.",
+    ),
+    "fireworks": Preset(
+        "https://api.fireworks.ai/inference/v1",
+        "accounts/fireworks/models/llama-v3p3-70b-instruct",
+        "FIREWORKS_API_KEY",
+    ),
+    "deepinfra": Preset(
+        "https://api.deepinfra.com/v1/openai",
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "DEEPINFRA_API_KEY",
+    ),
+    "openai": Preset("https://api.openai.com/v1", "gpt-4o-mini", "OPENAI_API_KEY"),
+}
+
+
 def get_chat_model(settings: Settings | None = None, **overrides: Any) -> Any:
     """Build the configured chat model.
 
@@ -56,6 +105,10 @@ def get_chat_model(settings: Settings | None = None, **overrides: Any) -> Any:
     """
     settings = settings or get_settings()
     backend = settings.llm_backend.lower()
+
+    if backend in PROVIDER_PRESETS:
+        return _openai_compatible(backend, settings, **overrides)
+
     model = settings.chat_model or DEFAULT_MODELS.get(backend, "")
     params = {"temperature": 0, **overrides}
 
@@ -98,7 +151,46 @@ def get_chat_model(settings: Settings | None = None, **overrides: Any) -> Any:
         params.pop("max_tokens", None)
         return ChatOllama(model=model, **params)
 
-    raise ValueError(f"unknown llm backend {backend!r}; expected one of {sorted(DEFAULT_MODELS)}")
+    raise ValueError(f"unknown llm backend {backend!r}; expected one of {all_backends()}")
+
+
+def _openai_compatible(backend: str, settings: Settings, **overrides: Any) -> Any:
+    """Client for any endpoint speaking the OpenAI chat-completions protocol."""
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError as exc:
+        raise ImportError(
+            f"The {backend} backend needs: pip install 'finrag[openai-compatible]'"
+        ) from exc
+
+    preset = PROVIDER_PRESETS[backend]
+    key = os.environ.get(preset.key_env) or os.environ.get("FINRAG_LLM_API_KEY")
+    if not key:
+        raise RuntimeError(
+            f"{preset.key_env} is not set. The {backend} backend needs it; "
+            f"see {preset.base_url} for where to get a key."
+        )
+    return ChatOpenAI(
+        model=settings.chat_model or preset.default_model,
+        base_url=settings.openai_base_url or preset.base_url,
+        api_key=key,
+        temperature=0,
+        max_tokens=settings.max_output_tokens,
+        **overrides,
+    )
+
+
+def all_backends() -> list[str]:
+    """Every selectable backend name."""
+    return sorted(set(DEFAULT_MODELS) | set(PROVIDER_PRESETS))
+
+
+def default_model_for(backend: str) -> str:
+    """The model used when FINRAG_CHAT_MODEL is blank."""
+    backend = backend.lower()
+    if backend in PROVIDER_PRESETS:
+        return PROVIDER_PRESETS[backend].default_model
+    return DEFAULT_MODELS.get(backend, "")
 
 
 def required_api_key(settings: Settings | None = None) -> str | None:
@@ -107,6 +199,8 @@ def required_api_key(settings: Settings | None = None) -> str | None:
     backend = settings.llm_backend.lower()
     if backend in KEYLESS_BACKENDS:
         return None
+    if backend in PROVIDER_PRESETS:
+        return PROVIDER_PRESETS[backend].key_env
     keys = {
         "anthropic": "ANTHROPIC_API_KEY",
         "google": "GOOGLE_API_KEY",

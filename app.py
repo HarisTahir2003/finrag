@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 from finrag.config import get_settings
 from finrag.ingest.download import list_filings
-from finrag.llm import DEFAULT_MODELS, required_api_key
+from finrag.llm import default_model_for, required_api_key
 
 load_dotenv()
 
@@ -27,7 +27,7 @@ settings = get_settings()
 with st.sidebar:
     st.title("Settings")
 
-    model_name = settings.chat_model or DEFAULT_MODELS[settings.llm_backend]
+    model_name = settings.chat_model or default_model_for(settings.llm_backend)
     key_var = required_api_key(settings)
     if key_var is None:
         # Ollama runs locally and needs no credentials.

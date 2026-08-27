@@ -47,6 +47,10 @@ class Settings:
         default_factory=lambda: int(_env("FINRAG_MAX_OUTPUT_TOKENS", "4000"))
     )
 
+    # Overrides the preset base URL for OpenAI-compatible backends. Point this
+    # at a self-hosted vLLM or LM Studio server to use one.
+    openai_base_url: str = field(default_factory=lambda: _env("FINRAG_OPENAI_BASE_URL", ""))
+
     # Local models via Ollama.
     ollama_base_url: str = field(
         default_factory=lambda: _env("OLLAMA_BASE_URL", "http://localhost:11434")

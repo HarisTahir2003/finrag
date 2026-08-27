@@ -88,3 +88,77 @@ def test_overrides_reach_the_constructor(monkeypatch):
     monkeypatch.setenv("FINRAG_LLM_BACKEND", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-not-a-real-key")
     assert get_chat_model(get_settings(), max_tokens=123).max_tokens == 123
+
+
+# ---- OpenAI-compatible providers ----------------------------------------
+# Cerebras, OpenRouter, Together, Fireworks and DeepInfra all speak the same
+# protocol, so they share one client and differ only by preset.
+
+
+def test_every_preset_is_complete():
+    from finrag.llm import PROVIDER_PRESETS
+
+    for name, preset in PROVIDER_PRESETS.items():
+        assert preset.base_url.startswith("https://"), name
+        assert preset.default_model, name
+        assert preset.key_env.endswith("_API_KEY"), name
+
+
+def test_all_backends_covers_both_families():
+    from finrag.llm import PROVIDER_PRESETS, all_backends
+
+    backends = set(all_backends())
+    assert {"anthropic", "google", "groq", "ollama"} <= backends
+    assert set(PROVIDER_PRESETS) <= backends
+
+
+@pytest.mark.parametrize(
+    ("backend", "expected"),
+    [
+        ("cerebras", "CEREBRAS_API_KEY"),
+        ("openrouter", "OPENROUTER_API_KEY"),
+        ("together", "TOGETHER_API_KEY"),
+    ],
+)
+def test_preset_backends_report_their_key(monkeypatch, backend, expected):
+    monkeypatch.setenv("FINRAG_LLM_BACKEND", backend)
+    assert required_api_key(get_settings()) == expected
+
+
+def test_missing_key_fails_with_a_useful_message(monkeypatch):
+    """Silent fallback to a wrong endpoint would be far harder to debug."""
+    pytest.importorskip("langchain_openai")
+    monkeypatch.setenv("FINRAG_LLM_BACKEND", "cerebras")
+    monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
+    monkeypatch.delenv("FINRAG_LLM_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="CEREBRAS_API_KEY"):
+        get_chat_model(get_settings())
+
+
+def test_builds_a_client_pointed_at_the_preset_url(monkeypatch):
+    pytest.importorskip("langchain_openai")
+    monkeypatch.setenv("FINRAG_LLM_BACKEND", "cerebras")
+    monkeypatch.setenv("CEREBRAS_API_KEY", "test-key")
+    monkeypatch.delenv("FINRAG_CHAT_MODEL", raising=False)
+    monkeypatch.delenv("FINRAG_OPENAI_BASE_URL", raising=False)
+    llm = get_chat_model(get_settings())
+    assert type(llm).__name__ == "ChatOpenAI"
+    assert "cerebras.ai" in str(llm.openai_api_base)
+    assert llm.model_name == "gpt-oss-120b"
+
+
+def test_base_url_override_wins(monkeypatch):
+    """So the same backend can point at a self-hosted vLLM server."""
+    pytest.importorskip("langchain_openai")
+    monkeypatch.setenv("FINRAG_LLM_BACKEND", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("FINRAG_OPENAI_BASE_URL", "http://localhost:8000/v1")
+    assert "localhost:8000" in str(get_chat_model(get_settings()).openai_api_base)
+
+
+def test_generic_key_variable_is_a_fallback(monkeypatch):
+    pytest.importorskip("langchain_openai")
+    monkeypatch.setenv("FINRAG_LLM_BACKEND", "together")
+    monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
+    monkeypatch.setenv("FINRAG_LLM_API_KEY", "shared-key")
+    assert get_chat_model(get_settings()) is not None
