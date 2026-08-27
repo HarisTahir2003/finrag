@@ -27,15 +27,22 @@ settings = get_settings()
 with st.sidebar:
     st.title("Settings")
 
+    model_name = settings.chat_model or DEFAULT_MODELS[settings.llm_backend]
     key_var = required_api_key(settings)
-    api_key = st.text_input(
-        f"{settings.llm_backend.title()} API key",
-        type="password",
-        value=os.environ.get(key_var, ""),
-        help=f"Read from {key_var}. Model: {settings.chat_model or DEFAULT_MODELS[settings.llm_backend]}",
-    )
-    if api_key:
-        os.environ[key_var] = api_key
+    if key_var is None:
+        # Ollama runs locally and needs no credentials.
+        api_key = "local"
+        st.info(f"Running locally via {settings.llm_backend} — no API key needed.")
+        st.caption(f"Model: {model_name}")
+    else:
+        api_key = st.text_input(
+            f"{settings.llm_backend.title()} API key",
+            type="password",
+            value=os.environ.get(key_var, ""),
+            help=f"Read from {key_var}. Model: {model_name}",
+        )
+        if api_key:
+            os.environ[key_var] = api_key
 
     st.divider()
     st.caption("Index")
@@ -85,7 +92,7 @@ for message in st.session_state.messages:
 
 placeholder = "Compare Apple and Amazon's current ratio in fiscal 2023"
 if prompt := st.chat_input(placeholder):
-    if not os.environ.get(key_var):
+    if key_var is not None and not os.environ.get(key_var):
         st.warning(f"Enter a {settings.llm_backend.title()} API key in the sidebar first.")
     else:
         st.session_state.messages.append({"role": "user", "content": prompt})

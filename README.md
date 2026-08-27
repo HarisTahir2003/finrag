@@ -27,7 +27,7 @@ which is the usual failure mode when an LLM is asked to do arithmetic on a docum
 | `src/finrag/ingest/index.py` | Chunking and idempotent upsert into Chroma. |
 | `src/finrag/chunking.py` | Structure-aware or fixed-width chunking. |
 | `src/finrag/embeddings.py` | Local (sentence-transformers) or Google embedding backends. |
-| `src/finrag/llm.py` | Anthropic or Google chat backends, selected by config. |
+| `src/finrag/llm.py` | Chat backends: Anthropic, Google, Groq or local Ollama. |
 | `src/finrag/retrieval.py` | Filtered search, query expansion, reciprocal rank fusion. |
 | `src/finrag/calculator.py` | AST-whitelisted arithmetic — the agent's calculator tool. |
 | `src/finrag/agent.py` | Tool-calling agent over retrieval + calculator. |
@@ -54,7 +54,7 @@ git clone https://github.com/HarisTahir2003/finrag.git
 cd finrag
 
 python3 -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
-pip install -e ".[local,semantic,anthropic,app,dev]"     # or [google] instead of [anthropic]
+pip install -e ".[local,semantic,anthropic,app,dev]"   # swap in [groq], [ollama] or [google]
 
 cp .env.example .env       # then fill in SEC_CONTACT_EMAIL and one provider key
 ```
@@ -78,16 +78,24 @@ Anthropic publishes no embedding model. Embeddings default to local sentence-tra
 **indexing all fifty filings costs nothing** whichever chat provider you use — the only billable
 calls are answering questions and running the LLM-scored evaluations.
 
-| Setting | Default | Alternatives |
-|---|---|---|
-| `FINRAG_LLM_BACKEND` | `anthropic` | `google` |
-| `FINRAG_CHAT_MODEL` | backend default | any model the provider offers |
-| `FINRAG_EMBEDDINGS` | `local` (free) | `google` |
+| `FINRAG_LLM_BACKEND` | Default model | Needs | Cost |
+|---|---|---|---|
+| `ollama` | `qwen3:4b` | `ollama serve`, ~3GB RAM | **free, unlimited, offline** |
+| `groq` | `llama-3.3-70b-versatile` | free API key, no card | **free**, rate limited per minute |
+| `anthropic` | `claude-haiku-4-5-20251001` | API key | ~$1/$5 per M tokens |
+| `google` | `gemini-2.5-flash` | API key | ~$0.30/$2.50 per M tokens |
 
-Defaults are `claude-haiku-4-5-20251001` and `gemini-2.5-flash`, both picked for cost. The model is
-reading supplied context rather than reasoning from memory, so a small model is the right tool.
-Retrieval depth is the other cost lever: `FINRAG_RETRIEVAL_K=8` roughly halves tokens per call
-versus the default of 20.
+`FINRAG_EMBEDDINGS` is separate and defaults to `local`, so **indexing is free on every one of
+these**. Only answering questions and the LLM-scored evaluations are billable, and on the two
+open-weight backends not even those.
+
+Two things to know when running open-weight models. Groq's free tier caps tokens per *minute*, and
+a default retrieval of 20 chunks will breach it — set `FINRAG_RETRIEVAL_K=6` or lower. Ollama needs
+`FINRAG_OLLAMA_NUM_CTX` to exceed the retrieved context plus the agent scratchpad, or it truncates
+the prompt without telling you, which looks like the model ignoring its context.
+
+Retrieval depth is the main cost and rate-limit lever throughout: `FINRAG_RETRIEVAL_K=8` roughly
+halves tokens per call against the default of 20.
 
 `FINRAG_DATA_ROOT` controls where filings and the vector store are written. It defaults to
 `./data`, which is gitignored. Nothing is stored outside the repository unless you point it

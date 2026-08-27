@@ -23,11 +23,40 @@ def test_blank_model_resolves_to_the_backend_default(monkeypatch):
 
 @pytest.mark.parametrize(
     ("backend", "expected"),
-    [("anthropic", "ANTHROPIC_API_KEY"), ("google", "GOOGLE_API_KEY")],
+    [
+        ("anthropic", "ANTHROPIC_API_KEY"),
+        ("google", "GOOGLE_API_KEY"),
+        ("groq", "GROQ_API_KEY"),
+    ],
 )
 def test_required_key_follows_the_backend(monkeypatch, backend, expected):
     monkeypatch.setenv("FINRAG_LLM_BACKEND", backend)
     assert required_api_key(get_settings()) == expected
+
+
+def test_ollama_needs_no_key(monkeypatch):
+    """A keyless backend must report None, not raise or invent a variable name."""
+    monkeypatch.setenv("FINRAG_LLM_BACKEND", "ollama")
+    assert required_api_key(get_settings()) is None
+
+
+def test_every_backend_has_a_default_model():
+    assert set(DEFAULT_MODELS) == {"anthropic", "google", "groq", "ollama"}
+    assert all(v for v in DEFAULT_MODELS.values())
+
+
+def test_builds_an_ollama_client_without_credentials(monkeypatch):
+    """The point of the local backend: it constructs with no key present."""
+    pytest.importorskip("langchain_ollama")
+    monkeypatch.setenv("FINRAG_LLM_BACKEND", "ollama")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("FINRAG_CHAT_MODEL", raising=False)
+    llm = get_chat_model(get_settings())
+    assert type(llm).__name__ == "ChatOllama"
+    assert llm.model == DEFAULT_MODELS["ollama"]
+    # num_ctx must be large enough for retrieved chunks plus the scratchpad,
+    # or Ollama truncates the prompt silently.
+    assert llm.num_ctx >= 8192
 
 
 def test_unknown_backend_is_rejected(monkeypatch):

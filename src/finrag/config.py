@@ -47,6 +47,17 @@ class Settings:
         default_factory=lambda: int(_env("FINRAG_MAX_OUTPUT_TOKENS", "4000"))
     )
 
+    # Local models via Ollama.
+    ollama_base_url: str = field(
+        default_factory=lambda: _env("OLLAMA_BASE_URL", "http://localhost:11434")
+    )
+    # Must exceed the retrieved context plus the agent scratchpad. Ollama
+    # truncates the prompt without saying so, which presents as the model
+    # ignoring its context rather than never having received it.
+    ollama_context_length: int = field(
+        default_factory=lambda: int(_env("FINRAG_OLLAMA_NUM_CTX", "16384"))
+    )
+
     # "semantic" chunks on document structure via unstructured; "recursive" is
     # the faster fixed-width splitter. See finrag.chunking for the trade-off.
     chunk_strategy: str = field(default_factory=lambda: _env("FINRAG_CHUNK_STRATEGY", "semantic"))

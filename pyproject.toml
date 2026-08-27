@@ -32,6 +32,10 @@ local = ["sentence-transformers>=3.0.0", "langchain-huggingface>=0.1.0"]
 # Google embeddings + Gemini for the agent.
 anthropic = ["langchain-anthropic>=0.3", "langchain-classic>=1.0.0"]
 google = ["langchain-google-genai>=2.0.0", "langchain-classic>=1.0.0"]
+# Open-weight models on Groq's free developer tier.
+groq = ["langchain-groq>=0.2", "langchain-classic>=1.0.0"]
+# Open-weight models running locally. No key, no rate limit, no cost.
+ollama = ["langchain-ollama>=0.2", "langchain-classic>=1.0.0"]
 # Structure-aware chunking.
 semantic = ["unstructured[html]>=0.18.0"]
 app = ["streamlit>=1.40.0"]
