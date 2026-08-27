@@ -46,3 +46,40 @@ def test_semantic_chunking_survives_an_unusable_unstructured(monkeypatch):
 
     assert len(chunks) > 1, "should have fallen back to recursive chunking, not returned nothing"
     assert all(c.strip() for c in chunks)
+
+
+def test_semantic_chunking_handles_inline_xbrl():
+    """The shape every real 10-K arrives in, which no fixture had.
+
+    Filings are inline XBRL: an `<XBRL>` element and an XML declaration sit in
+    front of the `<html>` tag. partition_html reads that preamble, decides the
+    document is XML, and returns zero elements -- no error, at any size. The
+    committed fixtures are hand-written HTML starting at `<html>`, so semantic
+    chunking passed every test while producing an empty index for all four
+    real filings on disk.
+    """
+    pytest.importorskip("unstructured.partition.html")
+
+    body = "".join(f"<p>Total net sales increased {i} percent year over year.</p>" for i in range(80))
+    wrapped = (
+        "\n<XBRL>\n<?xml version='1.0' encoding='ASCII'?>\n"
+        "<!--XBRL Document Created with the Workiva Platform-->\n"
+        f'<html xmlns:link="http://www.xbrl.org/2003/linkbase"><body>{body}</body></html>'
+    )
+
+    chunks = chunk_filing(
+        html=wrapped, text="", strategy="semantic", chunk_size=500, chunk_overlap=50
+    )
+    assert chunks, "inline-XBRL filings must produce chunks, not an empty index"
+    assert any("net sales" in c for c in chunks)
+
+
+def test_semantic_chunking_falls_back_when_it_produces_nothing(monkeypatch):
+    """An empty result is a failure that never raises, so it needs its own guard."""
+    partition = pytest.importorskip("unstructured.partition.html")
+    monkeypatch.setattr(partition, "partition_html", lambda *a, **k: [])
+
+    html = "<html><body><p>" + "Revenue rose sharply. " * 300 + "</p></body></html>"
+    chunks = chunk_filing(html=html, text="", strategy="semantic", chunk_size=500, chunk_overlap=50)
+
+    assert len(chunks) > 1, "should have fallen through to recursive rather than returning []"

@@ -52,6 +52,34 @@ def extract_primary_document(raw: str, form_type: str = "10-K") -> str | None:
     return None
 
 
+_HTML_START = re.compile(r"<html\b", re.IGNORECASE)
+
+
+def strip_ixbrl_wrapper(html: str) -> str:
+    """Return the document from its opening <html> tag, discarding any preamble.
+
+    Every 10-K filed through a modern agent is inline XBRL, and the primary
+    document arrives wrapped:
+
+        <XBRL>
+        <?xml version='1.0' encoding='ASCII'?>
+        <!--XBRL Document Created with the Workiva Platform-->
+        <html xmlns:link="http://www.xbrl.org/2003/linkbase" ...>
+
+    BeautifulSoup shrugs at that, which is why the text path never noticed. An
+    HTML partitioner does not: it reads the `<XBRL>` element and the XML
+    declaration, concludes the document is XML rather than HTML, and returns
+    zero elements -- instantly, without error, at any document size. Two
+    hundred and fifty bytes of preamble are the whole difference between 557
+    elements and none.
+
+    Documents that already start at <html>, and anything with no <html> tag at
+    all, are returned unchanged.
+    """
+    match = _HTML_START.search(html)
+    return html[match.start() :] if match else html
+
+
 def html_to_text(html: str) -> str:
     """Flatten filing HTML to text, preserving tables as markdown."""
     soup = BeautifulSoup(html, "lxml")

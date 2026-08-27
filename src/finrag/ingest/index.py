@@ -124,6 +124,10 @@ def index_filings(
             log.error("skipping %s: %s", path, exc)
             continue
         if not docs:
+            # Loud, because this is how a whole corpus quietly becomes an empty
+            # index: every filing parses, every filing yields nothing, and the
+            # run still reports success.
+            log.warning("%s: parsed but produced no chunks; skipping", path)
             continue
 
         # Replace, do not merely upsert. Chunk ids hash the chunk's text, so
@@ -142,6 +146,13 @@ def index_filings(
         log.info("%s FY%s: %d chunks", first["ticker"], first["year"], len(docs))
         total_chunks += len(docs)
         indexed += 1
+
+    if paths and not indexed:
+        log.error(
+            "%d filing(s) on disk but none could be indexed -- the index is empty. "
+            "Try FINRAG_CHUNK_STRATEGY=recursive to rule out the chunker.",
+            len(paths),
+        )
 
     return {"filings": indexed, "chunks": total_chunks}
 

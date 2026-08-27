@@ -45,3 +45,31 @@ def test_scripts_and_styles_are_dropped():
 
 def test_unknown_form_returns_none(aapl_fy2023):
     assert extract_primary_document(aapl_fy2023.read_text(), form_type="10-Q") is None
+
+
+def test_strip_ixbrl_wrapper_removes_the_xbrl_preamble():
+    """Real 10-Ks do not begin at <html>, and one partitioner cares a great deal."""
+    from finrag.ingest.parse import strip_ixbrl_wrapper
+
+    wrapped = (
+        "\n<XBRL>\n<?xml version='1.0' encoding='ASCII'?>\n"
+        "<!--XBRL Document Created with the Workiva Platform-->\n"
+        '<html xmlns:link="http://www.xbrl.org/2003/linkbase"><body><p>Revenue</p></body></html>'
+    )
+    out = strip_ixbrl_wrapper(wrapped)
+    assert out.startswith("<html")
+    assert "<XBRL>" not in out
+    assert "Revenue" in out, "the document itself must survive intact"
+
+
+def test_strip_ixbrl_wrapper_leaves_plain_html_alone():
+    from finrag.ingest.parse import strip_ixbrl_wrapper
+
+    plain = "<html><body><p>x</p></body></html>"
+    assert strip_ixbrl_wrapper(plain) == plain
+
+
+def test_strip_ixbrl_wrapper_passes_through_documents_with_no_html_tag():
+    from finrag.ingest.parse import strip_ixbrl_wrapper
+
+    assert strip_ixbrl_wrapper("no markup at all") == "no markup at all"

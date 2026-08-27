@@ -54,14 +54,24 @@ def chunk_semantic(html: str, chunk_size: int = 3000, chunk_overlap: int = 300) 
         from unstructured.chunking.title import chunk_by_title
         from unstructured.partition.html import partition_html
 
-        elements = partition_html(text=html)
+        from .ingest.parse import strip_ixbrl_wrapper
+
+        elements = partition_html(text=strip_ixbrl_wrapper(html))
         chunks = chunk_by_title(
             elements,
             max_characters=chunk_size,
             combine_text_under_n_chars=chunk_size // 4,
             overlap=chunk_overlap,
         )
-        return [str(c) for c in chunks if str(c).strip()]
+        kept = [str(c) for c in chunks if str(c).strip()]
+        if kept:
+            return kept
+        # Producing nothing is a failure that does not raise. partition_html
+        # returns an empty list rather than complaining when it decides a
+        # document is not HTML, so a silent [] here became an empty index and a
+        # cheerful "indexed 0 filings -> 0 chunks". Treat it like any other
+        # failure and fall through.
+        log.warning("semantic chunking produced no chunks; falling back to recursive chunking")
     except ImportError:
         log.warning(
             "unstructured is not installed; falling back to recursive chunking. "
