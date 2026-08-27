@@ -23,3 +23,26 @@ def test_short_text_is_one_chunk():
 def test_unknown_strategy_is_rejected():
     with pytest.raises(ValueError, match="unknown chunk strategy"):
         chunk_filing(html="<p>x</p>", text="x", strategy="magic")
+
+
+def test_semantic_chunking_survives_an_unusable_unstructured(monkeypatch):
+    """Installed-but-broken has to degrade exactly like not-installed.
+
+    Current `unstructured` fetches a spaCy sentence model the first time it
+    partitions anything, so an offline machine, a proxy, or a missing CA bundle
+    raises from inside `partition_html` rather than at import. Catching only
+    ImportError left that case fatal, and fatal at the worst moment: chunking
+    runs after every filing is downloaded and parsed.
+    """
+    partition = pytest.importorskip("unstructured.partition.html")
+
+    def unusable(*args, **kwargs):
+        raise RuntimeError("Failed to download spaCy model: certificate verify failed")
+
+    monkeypatch.setattr(partition, "partition_html", unusable)
+
+    html = "<p>" + "Revenue rose sharply. " * 400 + "</p>"
+    chunks = chunk_filing(html=html, text="", strategy="semantic", chunk_size=500, chunk_overlap=50)
+
+    assert len(chunks) > 1, "should have fallen back to recursive chunking, not returned nothing"
+    assert all(c.strip() for c in chunks)

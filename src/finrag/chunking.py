@@ -36,27 +36,48 @@ def chunk_recursive(text: str, chunk_size: int = 3000, chunk_overlap: int = 300)
 
 
 def chunk_semantic(html: str, chunk_size: int = 3000, chunk_overlap: int = 300) -> list[str]:
-    """Structure-aware chunking. Falls back to recursive if unstructured is absent."""
+    """Structure-aware chunking, with recursive chunking as the safety net.
+
+    ``unstructured`` fails two ways and both have to land in the same place. It
+    may be absent, because the optional extra was never installed. Or it may be
+    installed and still unusable at call time: current versions fetch a spaCy
+    sentence model on first use, so a machine that is offline, behind a proxy,
+    or missing a CA bundle raises from deep inside ``partition_html``.
+
+    Only the first of those used to be handled, which put the failure in the
+    worst possible spot -- chunking runs after every filing has been downloaded
+    and parsed, so aborting there discards the slow part of the pipeline over an
+    optional improvement in chunk quality. Recursive chunking always works and
+    needs nothing, so any failure degrades to it and says so.
+    """
     try:
         from unstructured.chunking.title import chunk_by_title
         from unstructured.partition.html import partition_html
+
+        elements = partition_html(text=html)
+        chunks = chunk_by_title(
+            elements,
+            max_characters=chunk_size,
+            combine_text_under_n_chars=chunk_size // 4,
+            overlap=chunk_overlap,
+        )
+        return [str(c) for c in chunks if str(c).strip()]
     except ImportError:
         log.warning(
             "unstructured is not installed; falling back to recursive chunking. "
             "Install it with: pip install 'finrag[semantic]'"
         )
-        from .ingest.parse import html_to_text
+    except Exception as exc:  # noqa: BLE001 - degrade on anything, never abort the ingest
+        log.warning(
+            "semantic chunking failed (%s: %s); falling back to recursive chunking. "
+            "Set FINRAG_CHUNK_STRATEGY=recursive to choose this deliberately.",
+            type(exc).__name__,
+            exc,
+        )
 
-        return chunk_recursive(html_to_text(html), chunk_size, chunk_overlap)
+    from .ingest.parse import html_to_text
 
-    elements = partition_html(text=html)
-    chunks = chunk_by_title(
-        elements,
-        max_characters=chunk_size,
-        combine_text_under_n_chars=chunk_size // 4,
-        overlap=chunk_overlap,
-    )
-    return [str(c) for c in chunks if str(c).strip()]
+    return chunk_recursive(html_to_text(html), chunk_size, chunk_overlap)
 
 
 def chunk_filing(
