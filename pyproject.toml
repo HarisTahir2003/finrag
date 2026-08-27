@@ -20,7 +20,12 @@ dependencies = [
     "langchain-core>=0.3",
     # SQLiteCache for LLM response caching -- what makes evaluation re-runs
     # free on rate-limited tiers.
-    "langchain-community>=0.3",
+    # Upper bound is load-bearing, not caution. 0.4 dropped
+    # `chat_models.vertexai`, which ragas still imports unconditionally at
+    # package import time -- so with 0.4 installed, `finrag eval ragas` dies on
+    # a ModuleNotFoundError for a backend nobody asked for. We use this package
+    # only for SQLiteCache, so the older line costs us nothing.
+    "langchain-community>=0.3,<0.4",
     "langchain-text-splitters>=0.2.0",
     "langchain-chroma>=0.1.2",
     "chromadb>=0.5",
@@ -45,11 +50,22 @@ vertex = ["langchain-google-vertexai>=2.0.0", "langchain-classic>=1.0.0"]
 # One client for every OpenAI-compatible endpoint: Cerebras, OpenRouter,
 # Together, Fireworks, DeepInfra, OpenAI, or a self-hosted vLLM server.
 openai-compatible = ["langchain-openai>=0.2", "langchain-classic>=1.0.0"]
-# Structure-aware chunking.
-semantic = ["unstructured[html]>=0.18.0"]
+# Structure-aware chunking. Plain `unstructured`: the `html` extra was folded
+# into the base package, so asking for it now only earns a pip warning.
+semantic = ["unstructured>=0.18.0"]
 app = ["streamlit>=1.40.0"]
 # Scoring with an LLM judge, plus experiment tracking.
-eval = ["ragas>=0.2", "datasets>=2.20.0", "mlflow>=2.16"]
+#
+# Both floors here are load-bearing. Below 0.4, ragas imports
+# `langchain_community.chat_models.vertexai` -- a module that no longer
+# exists -- so a resolver free to walk "ragas>=0.2" down to 0.3.1 produces an
+# install that passes `pip check` and then dies the first time the judge
+# runs. The openai floor guards the same failure from the other side: ragas
+# pulls `instructor`, which will happily drag the OpenAI client back to the
+# 1.x line and take langchain-openai with it, breaking every
+# OpenAI-compatible backend (Cerebras, GitHub Models, OpenRouter) to satisfy
+# the judge.
+eval = ["ragas>=0.4", "datasets>=2.20.0", "mlflow>=2.16", "openai>=2.45"]
 dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
 
 [project.scripts]

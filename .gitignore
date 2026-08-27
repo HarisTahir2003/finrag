@@ -40,6 +40,7 @@ Part2.ipynb
 
 # ---- Experiment tracking (added in Phase 2) ----
 mlruns/
+mlflow.db
 mlartifacts/
 
 # ---- OS / editor ----
