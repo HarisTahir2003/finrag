@@ -42,3 +42,8 @@ mlartifacts/
 .DS_Store
 .vscode/
 .idea/
+
+# Coverage artefacts
+.coverage
+coverage.xml
+htmlcov/
