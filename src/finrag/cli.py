@@ -13,6 +13,8 @@ import logging
 import re
 import sys
 
+from dotenv import find_dotenv, load_dotenv
+
 from .config import DEFAULT_TICKERS, get_settings
 
 
@@ -24,6 +26,23 @@ def _configure_logging(verbose: bool) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Every setting is read from the environment, and .env is where the README
+    # and .env.example both tell you to put it -- but only app.py was loading
+    # it, so the CLI ignored the file entirely. That failed loudest on
+    # SEC_CONTACT_EMAIL, which raises, and quietest everywhere else: an unread
+    # GROQ_API_KEY looks like no key at all, and an unread FINRAG_RETRIEVAL_K
+    # silently restores k=20, which is exactly the free-tier profile a user was
+    # trying to avoid. Loading here rather than in config.py keeps the tests
+    # hermetic: they exercise the library, not this entry point.
+    # usecwd=True searches upward from the working directory. The default
+    # searches upward from this file instead, which happens to find the repo
+    # .env under an editable install and finds nothing at all once finrag is
+    # installed normally into site-packages. The plain call stays as a fallback;
+    # load_dotenv does not override variables already in the environment, so a
+    # real exported value still beats both, and the nearer file wins.
+    load_dotenv(find_dotenv(usecwd=True))
+    load_dotenv()
+
     parser = argparse.ArgumentParser(prog="finrag", description=__doc__)
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -113,9 +132,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "status":
         from .ingest.download import list_filings
 
+        # The LLM settings are here because their defaults are expensive: an
+        # unread .env silently means backend=anthropic at k=20, which is a
+        # paid call carrying a context no free tier accepts. `status` is
+        # where you find that out before a run, not after.
         print(f"data root          {settings.data_root}")
         print(f"embedding backend  {settings.embedding_backend}")
         print(f"chunk strategy     {settings.chunk_strategy}")
+        print(f"llm backend        {settings.llm_backend}")
+        print(f"retrieval k        {settings.retrieval_k}")
+        print(f"sec contact        {settings.sec_contact_email or 'NOT SET'}")
         print(f"index              {settings.index_dir}")
         print(f"filings on disk    {len(list_filings(settings=settings))}")
         try:
