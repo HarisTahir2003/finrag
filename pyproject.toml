@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "finrag"
+version = "0.2.0"
+description = "Agentic retrieval-augmented generation over SEC 10-K filings"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Haris Tahir Rana" }]
+
+# Kept deliberately small. Everything needed to ingest filings, build an index
+# with local embeddings, and run the test suite -- no API key required.
+dependencies = [
+    "beautifulsoup4>=4.12.3",
+    "lxml>=5.1.0",
+    "sec-edgar-downloader>=5.0.0",
+    "langchain-core>=0.3",
+    "langchain-text-splitters>=0.2.0",
+    "langchain-chroma>=0.1.2",
+    "chromadb>=0.5",
+    "pydantic>=2.10.0",
+    "python-dotenv>=1.0.1",
+]
+
+[project.optional-dependencies]
+# Local embeddings: no API key, no per-call cost. The CI default.
+local = ["sentence-transformers>=3.0.0", "langchain-huggingface>=0.1.0"]
+# Google embeddings + Gemini for the agent.
+google = ["langchain-google-genai>=2.0.0", "langchain-classic>=1.0.0"]
+# Structure-aware chunking.
+semantic = ["unstructured[html]>=0.18.0"]
+app = ["streamlit>=1.40.0"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
+
+[project.scripts]
+finrag = "finrag.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

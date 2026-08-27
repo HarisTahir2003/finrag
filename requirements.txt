@@ -1,46 +1,12 @@
-# ---- Core ----
-numpy>=1.26.0
-pandas>=2.2.0
-matplotlib>=3.8.0
-seaborn>=0.13.0
+# The package and its dependencies are declared in pyproject.toml. This file
+# exists so `pip install -r requirements.txt` still works; it installs finrag in
+# editable mode with the extras needed to run the notebook and the app.
+#
+# Extras, if you want a narrower install:
+#   .[local]     sentence-transformers embeddings - no API key, used by CI
+#   .[google]    Gemini + text-embedding-004 - needs GOOGLE_API_KEY
+#   .[semantic]  structure-aware chunking via unstructured
+#   .[app]       Streamlit front end
+#   .[dev]       pytest + ruff
 
-# ---- Hugging Face ----
-datasets>=2.20.0
-evaluate>=0.4.0
-transformers>=4.45.0
-sentence-transformers>=3.0.0
-
-# ---- LangChain ----
-langchain==1.2.0
-langchain-core==1.2.5
-langchain-classic>=1.0.0          # provides AgentExecutor / create_tool_calling_agent (imported by app.py and Part3)
-langchain-community>=0.4.1
-langchain-experimental>=0.4.1
-langchain-text-splitters>=0.2.0
-langchain-google-genai==4.1.2
-langchain-huggingface>=0.1.0
-langchain-chroma>=0.1.2
-
-# ---- Evaluation ----
-ragas==0.4.1
-bert-score>=0.3.13                # was listed as "bertscore", which is not a real package
-rouge-score>=0.1.2
-
-# ---- Vector store ----
-chromadb==1.3.7
-
-# ---- SEC filings ingestion ----
-beautifulsoup4>=4.12.3
-lxml>=5.1.0
-sec-edgar-downloader>=0.4.0
-unstructured[html]>=0.18.0        # narrowed from [all-docs] (~2GB) to the extra actually needed
-
-# ---- App ----
-streamlit>=1.40.0                 # required by app.py, previously missing
-
-# ---- Support ----
-pydantic>=2.10.0
-python-dotenv>=1.0.1
-ipython>=8.20.0
-jupyter>=1.1.0
-requests>=2.32.0
+-e .[local,google,semantic,app,dev]
