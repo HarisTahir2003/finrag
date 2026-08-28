@@ -26,6 +26,10 @@ dependencies = [
     # a ModuleNotFoundError for a backend nobody asked for. We use this package
     # only for SQLiteCache, so the older line costs us nothing.
     "langchain-community>=0.3,<0.4",
+    # Lexical scoring for the hybrid retriever. A base dependency rather than
+    # an extra because hybrid is the default: behind an extra, the default
+    # retrieval mode would silently differ between two correct installs.
+    "rank_bm25>=0.2.2",
     "langchain-text-splitters>=0.2.0",
     "langchain-chroma>=0.1.2",
     "chromadb>=0.5",

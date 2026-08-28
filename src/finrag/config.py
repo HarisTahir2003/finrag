@@ -65,6 +65,14 @@ class Settings:
     # Trim retrieved context to a token budget before it reaches the model.
     # "auto" resolves per backend: free tiers with hard request-size ceilings
     # (Cerebras 8K, GitHub Models 8K-in) get 6000, everything else unlimited.
+    # "hybrid" fuses BM25 with the vector search; "vector" is the old
+    # behaviour. Hybrid is the default because it earned it on the 30-probe
+    # corpus set -- hit_rate 0.967 -> 1.000, mrr 0.695 -> 0.720 -- which is the
+    # same bar query expansion was held to and failed.
+    retrieval_mode: str = field(
+        default_factory=lambda: _env("FINRAG_RETRIEVAL_MODE", "hybrid").strip().lower()
+    )
+
     # Off by default because it was measured, not assumed. See
     # retrieval.expand_query: on the real corpus it halved hit rate.
     query_expansion: bool = field(

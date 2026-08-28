@@ -82,6 +82,85 @@ def reciprocal_rank_fusion(result_sets: list[list[Document]], k: int = 60) -> li
     return [seen[key] for key, _ in ranked]
 
 
+# One BM25 index per filing, keyed by (ticker, year, chunk count). Rebuilding it
+# on every query would mean re-tokenising a few hundred chunks each time; caching
+# it forever would serve a stale index after a re-index, which is why the chunk
+# count is part of the key -- a cheap way to notice the corpus moved underneath.
+_BM25_CACHE: dict[tuple[str, int, int], object] = {}
+
+
+def _bm25_for_filing(ticker: str, fiscal_year: int, store):
+    """A lexical index over one filing's chunks, or None if unavailable.
+
+    The candidate pool is one company-year, not the whole corpus: every query
+    here is already filtered to a single filing, so this indexes 99 to 978
+    chunks rather than 12,376. That is what makes building it on demand
+    affordable.
+
+    Returns None when rank_bm25 is not installed, so hybrid mode degrades to
+    vector-only rather than failing -- the same shape as chunk_semantic's
+    fallback.
+    """
+    where = {"$and": [{"ticker": ticker.upper()}, {"year": int(fiscal_year)}]}
+    try:
+        got = store.get(where=where, include=["documents", "metadatas"])
+    except (AttributeError, TypeError):
+        # Not every store can enumerate its contents -- a retriever-shaped
+        # object may only know how to search. Lexical scoring needs the corpus
+        # in hand, so without it hybrid mode is simply vector mode.
+        log.debug("store does not support get(); hybrid retrieval falls back to vector search")
+        return None
+    except Exception as exc:  # noqa: BLE001 - a failed fetch must not fail the query
+        log.warning("could not read chunks for %s FY%s: %s", ticker, fiscal_year, exc)
+        return None
+
+    texts = got.get("documents") or []
+    if not texts:
+        return None
+
+    key = (ticker.upper(), int(fiscal_year), len(texts))
+    if key in _BM25_CACHE:
+        return _BM25_CACHE[key]
+
+    try:
+        from langchain_community.retrievers import BM25Retriever
+    except ImportError:
+        log.warning("langchain-community missing; hybrid retrieval falls back to vector search")
+        return None
+
+    metadatas = got.get("metadatas") or [{} for _ in texts]
+    try:
+        # Passing metadatas is not cosmetic: reciprocal_rank_fusion dedups on
+        # metadata["id"], so without it the lexical and vector result sets share
+        # no keys and the "fusion" silently concatenates two disjoint lists.
+        retriever = BM25Retriever.from_texts(texts, metadatas=metadatas)
+    except ImportError:
+        log.warning(
+            "hybrid retrieval needs rank_bm25 (pip install 'finrag[hybrid]'); "
+            "falling back to vector search"
+        )
+        return None
+    except Exception as exc:  # noqa: BLE001 - a broken index must not fail the query
+        log.warning("could not build a lexical index for %s FY%s: %s", ticker, fiscal_year, exc)
+        return None
+
+    _BM25_CACHE[key] = retriever
+    return retriever
+
+
+def _lexical_candidates(query: str, ticker: str, fiscal_year: int, store, k: int):
+    """Top-k chunks by BM25. Empty when lexical retrieval is unavailable."""
+    retriever = _bm25_for_filing(ticker, fiscal_year, store)
+    if retriever is None:
+        return []
+    try:
+        retriever.k = k
+        return retriever.invoke(query)
+    except Exception as exc:  # noqa: BLE001 - degrade to vector-only
+        log.warning("lexical retrieval failed for %s FY%s: %s", ticker, fiscal_year, exc)
+        return []
+
+
 def trim_to_token_budget(docs: list[Document], max_tokens: int) -> list[Document]:
     """Keep the top-ranked whole chunks that fit inside a token budget.
 
@@ -137,12 +216,21 @@ def search_filing(
         store = open_store(settings)
 
     where = {"$and": [{"ticker": ticker.upper()}, {"year": int(fiscal_year)}]}
+    k = settings.retrieval_k
     try:
         search_text = expand_query(query) if settings.query_expansion else query
-        docs = store.similarity_search(search_text, k=settings.retrieval_k, filter=where)
+        docs = store.similarity_search(search_text, k=k, filter=where)
     except Exception as exc:  # noqa: BLE001 - surfaced to the agent as text, not raised
         log.error("retrieval failed for %s FY%s: %s", ticker, fiscal_year, exc)
         docs = []
+
+    if settings.retrieval_mode == "hybrid":
+        # The lexical side always sees the raw question. Expansion is a
+        # vector-space trick -- padding the query with financial boilerplate --
+        # and BM25 would read that padding as nine more terms to match on.
+        lexical = _lexical_candidates(query, ticker, fiscal_year, store, k)
+        if lexical:
+            docs = reciprocal_rank_fusion([docs, lexical])[:k]
     if apply_context_budget:
         docs = trim_to_token_budget(docs, settings.max_context_tokens)
     return Retrieved(documents=docs, ticker=ticker.upper(), fiscal_year=int(fiscal_year))

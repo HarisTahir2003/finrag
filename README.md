@@ -30,7 +30,7 @@ which is the usual failure mode when an LLM is asked to do arithmetic on a docum
 | `src/finrag/llm.py` | Chat backends — commercial, hosted open-weight, or local — with per-tier rate limiting and fallback chains. |
 | `src/finrag/cache.py` | SQLite LLM response cache: unchanged re-runs cost zero tokens. |
 | `src/finrag/eval/checkpoint.py` | Per-case eval checkpointing, so a run survives a daily quota. |
-| `src/finrag/retrieval.py` | Filtered search, query expansion, reciprocal rank fusion. |
+| `src/finrag/retrieval.py` | Filtered search, hybrid BM25 + vector fusion, context budgeting. |
 | `src/finrag/calculator.py` | AST-whitelisted arithmetic — the agent's calculator tool. |
 | `src/finrag/agent.py` | Tool-calling agent over retrieval + calculator. |
 | `src/finrag/eval/` | Three evaluation tiers, and the CI quality gate. |
@@ -38,7 +38,7 @@ which is the usual failure mode when an LLM is asked to do arithmetic on a docum
 | `src/finrag/cli.py` | `finrag download / index / status / ask / eval`. |
 | `Part3.ipynb` | Narrative walkthrough of the pipeline, importing from the package. |
 | `app.py` | Streamlit chat interface. |
-| `tests/` | 219 tests over parsing, fiscal years, chunk identity, calculator safety, dataset validity and the gate. |
+| `tests/` | 225 tests over parsing, fiscal years, chunk identity, calculator safety, dataset validity and the gate. |
 
 The original coursework project had two further modules — extractive QnA over FinanceBench, and
 earnings-call summarization on ECTSum. Neither is part of this repository, which is the SEC filing
@@ -244,14 +244,38 @@ the other.
 
 | metric | fixtures (CI gate, 9 probes) | 50 real filings (30 probes) |
 |---|---|---|
-| hit_rate | 1.000 | **0.967** |
-| mrr | 0.889 | **0.695** |
+| hit_rate | 1.000 | **1.000** |
+| mrr | 0.944 | **0.720** |
 | filter_accuracy | 1.000 | 1.000 |
 
-The real-corpus column is the honest one. Its single miss is a narrative probe whose target chunk
-ranks 26th, past the retrieval depth — a genuine weakness, left failing rather than tuned away.
-The MRR gap says the rest: the right chunk is usually found, but often second to seventh rather
-than first.
+The MRR is the honest number and the interesting one: the right chunk is nearly always retrieved,
+but ranked second to seventh rather than first.
+
+### Hybrid retrieval
+
+Retrieval fuses BM25 with the vector search by reciprocal rank fusion (`FINRAG_RETRIEVAL_MODE`,
+default `hybrid`; `vector` restores the older path). Measured on the 30-probe corpus set:
+
+| mode | hit_rate | mrr |
+|---|---|---|
+| vector | 0.967 | 0.695 |
+| **hybrid** | **1.000** | **0.720** |
+
+It was adopted because it moved those numbers, not because hybrid search is fashionable — the same
+bar query expansion was held to and failed.
+
+The aggregate hides a real trade, which is worth stating rather than rounding away. The probe that
+motivated this hunts the phrase *"intense competition"*; pure vector search ranked it 26th, and
+lexical scoring finds it. But BM25 also *demotes* some numeric probes: "net income for the year"
+matches lexically across many chunks, so JP Morgan's net income falls from rank 9 to 18 and
+Amazon's net loss from 2 to 7. Hybrid wins on aggregate and fixes a blind spot; it is not
+uniformly better per probe. Reranking is the next lever precisely because it should recover those
+demotions.
+
+`rank_bm25` is a base dependency rather than an extra, deliberately: with hybrid as the default,
+putting its scorer behind an optional extra would mean two correct installs retrieving differently
+and only one of them matching the numbers above. Where it is genuinely unavailable, retrieval
+degrades to vector rather than failing.
 
 Every expectation is read out of the filing, never chosen from what the retriever returns — a probe
 whose target was picked because it already ranks well measures nothing. Each figure is the queried
@@ -351,7 +375,7 @@ inheriting another's answers.
 pytest
 ```
 
-219 tests, no API key and no network required — they run against committed SEC-format fixtures.
+225 tests, no API key and no network required — they run against committed SEC-format fixtures.
 
 ## Known limitations
 
