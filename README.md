@@ -201,11 +201,30 @@ streamlit run app.py
 Three tiers, separated by what they cost to run.
 
 ```bash
+finrag eval datasets --gate               # are the cases themselves sound? free, no LLM
 finrag eval retrieval --fixtures --gate   # no LLM, no API key, free — this is the CI gate
 finrag eval retrieval                     # same, against the real downloaded corpus
 finrag eval ragas --limit 10              # needs whichever key FINRAG_LLM_BACKEND wants
 finrag eval agent                         # same
 ```
+
+**Datasets** checks the evaluation cases against the corpus before anything is scored with them.
+Hand-authored expectations rot in one particular way: they assert something the filings do not
+contain, and the result is a plausible wrong number rather than an error. Four such defects were
+found in twenty-nine cases —
+
+- a probe expecting the word "regionalization", which appears in no Amazon 10-K of any year;
+- a reference quoting Microsoft's total debt as $47,193M where the filing supports $47,237M (the
+  ratio rounds to 0.229 either way, which is why it went unnoticed);
+- a case demanding the calculator for a figure the filing states outright, so the agent was scored
+  as failing for behaving correctly;
+- a question about Meta's "Year of Efficiency", which is earnings-call language and appears nowhere
+  in the 10-K.
+
+Each one silently depressed a headline metric. The checker runs in two tiers: structural checks need
+only the YAML and run in CI, while corpus checks need the downloaded filings and run locally.
+`derived_figures` marks values an answer computes — an average, a sum — which legitimately appear in
+no chunk.
 
 **Retrieval** is scored by exact substring matching against a labelled set, so it is deterministic
 and costs nothing. It reports hit rate, MRR, and `filter_accuracy` — the fraction of retrieved
@@ -264,16 +283,28 @@ than a reasoning one.
 
 | metric | value |
 |---|---|
-| tool_path_accuracy | 0.90 |
-| calculator_compliance | 0.90 |
+| tool_path_accuracy | 0.95 |
+| calculator_compliance | 0.95 |
 | answered_with_figures | 0.95 |
 | clarification_requests | **0.00** |
 | errors | 0 |
 
-That last row is the one the rebuild was for. The original suite's single reported figure was a
-60% "functional tool call accuracy", and its largest component was the agent replying "which
+`clarification_requests` is the row the rebuild was for. The original suite's single reported figure
+was a 60% "functional tool call accuracy", and its largest component was the agent replying "which
 company are you interested in?" about a ticker the question had already named. Across twenty cases
 it now never happens.
+
+The single remaining failure is worth reading, because it is the metric working rather than the
+agent misbehaving in some unmeasurable way. Asked for Meta's 2023 operating margin — a figure the
+filing never prints, so it has to be computed from two that it does — the agent retrieved the
+inputs, skipped the calculator, and answered "35%". The correct value is 34.7%. That is exactly the
+behaviour `calculator_compliance` exists to catch, and exactly why the system prompt says not to
+compute in your head.
+
+That failure only became visible after the dataset was corrected. Before that it was one of two,
+and the other was a case demanding arithmetic for a figure the filing states outright — a defect
+that scored correct behaviour as a failure and hid this one in the noise. See
+`finrag eval datasets` below.
 
 Every run is logged to `results/` as JSON, and to MLflow when it is installed, alongside the
 configuration that produced it — including the backend and the *resolved* model name, since
