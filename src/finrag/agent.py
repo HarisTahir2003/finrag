@@ -45,6 +45,27 @@ class CalculatorInput(BaseModel):
     )
 
 
+def answer_text(output) -> str:
+    """Flatten an agent's answer to plain text.
+
+    Backends disagree about what ``output`` is. Groq and the OpenAI-compatible
+    providers return a string. Gemini returns a list of content blocks, and a
+    thinking model puts a `thought_signature` block of base64 next to the text
+    one -- so printing it raw shows a Python repr of a list of dicts where a
+    sentence should be, with a few hundred characters of opaque signature in
+    the middle of it.
+
+    Keeping only each block's `text` fixes the display and, more importantly,
+    keeps a thought signature out of anything that scores an answer: a
+    substring check for a figure would otherwise be searching base64 too.
+    """
+    if isinstance(output, list):
+        return "".join(
+            part.get("text", "") if isinstance(part, dict) else str(part) for part in output
+        ).strip()
+    return str(output).strip()
+
+
 def build_tools(store=None, settings: Settings | None = None) -> list:
     """Retrieval and calculator tools, bound to one vector store."""
     from langchain_core.tools import StructuredTool

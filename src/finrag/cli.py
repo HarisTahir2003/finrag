@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 import sys
 
@@ -50,6 +51,12 @@ def main(argv: list[str] | None = None) -> int:
     # real exported value still beats both, and the nearer file wins.
     load_dotenv(find_dotenv(usecwd=True))
     load_dotenv()
+
+    # gRPC logs one INFO line per file descriptor when it notices it has been
+    # forked, and the embedding model forks on every run -- fifty lines of "FD
+    # from fork parent still in poll list" ahead of any actual output. Warnings
+    # and errors still come through; setdefault leaves an explicit override alone.
+    os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
 
     parser = argparse.ArgumentParser(prog="finrag", description=__doc__)
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -166,11 +173,11 @@ def main(argv: list[str] | None = None) -> int:
         return _run_compare(args, settings)
 
     if args.command == "ask":
-        from .agent import build_agent
+        from .agent import answer_text, build_agent
 
         agent = build_agent(settings=settings, verbose=args.verbose)
         result = agent.invoke({"input": args.question})
-        print(f"\n{result['output']}")
+        print(f"\n{answer_text(result['output'])}")
         return 0
 
     return 1

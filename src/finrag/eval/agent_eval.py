@@ -15,6 +15,8 @@ import logging
 import re
 from dataclasses import dataclass, field
 
+# The CLI and the Streamlit app need the same flattening; see agent.answer_text.
+from ..agent import answer_text as _flatten
 from ..config import Settings, get_settings
 from .schema import AgentCase, load_agent_cases
 
@@ -158,13 +160,6 @@ def _tools_from_steps(intermediate_steps) -> list[str]:
         if name:
             names.append(name)
     return names
-
-
-def _flatten(output) -> str:
-    """Gemini can return a list of content parts rather than a string."""
-    if isinstance(output, list):
-        return "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in output).strip()
-    return str(output).strip()
 
 
 def evaluate_agent(

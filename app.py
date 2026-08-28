@@ -14,6 +14,7 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 
+from finrag.agent import answer_text
 from finrag.config import get_settings
 from finrag.ingest.download import list_filings
 from finrag.llm import default_model_for, required_api_key
@@ -103,7 +104,7 @@ if prompt := st.chat_input(placeholder):
             try:
                 agent = load_agent(api_key[-8:])
                 result = agent.invoke({"input": prompt})
-                answer = result["output"]
+                answer = answer_text(result["output"])
                 if isinstance(answer, list):
                     # Gemini can return a multi-part response; stitch it back together.
                     answer = "".join(

@@ -55,3 +55,42 @@ def test_fiscal_years_are_plausible():
 
 def test_every_agent_case_has_a_reference_answer():
     assert all(c.reference_answer.strip() for c in load_agent_cases())
+
+
+def test_answer_text_flattens_gemini_content_blocks():
+    """Gemini returns content blocks, and a thinking model adds a signature one.
+
+    Printed raw, that put a Python repr of a list of dicts on the terminal in
+    place of a sentence. Worse for scoring: a substring check for a figure
+    would have been searching a few hundred characters of base64 too.
+    """
+    from finrag.agent import answer_text
+
+    blocks = [
+        {
+            "type": "text",
+            "text": "Apple's total net sales in fiscal 2024 was $391,035 million.",
+            "thought_signature": "Ci8Bjz1rX6OkVnGjWG3EssK4XaXByvEPAQB8pobjsI0N",
+        }
+    ]
+    out = answer_text(blocks)
+    assert out == "Apple's total net sales in fiscal 2024 was $391,035 million."
+    assert "thought_signature" not in out
+    assert "Ci8Bjz1rX" not in out, "the signature must not reach a scored answer"
+
+
+def test_answer_text_passes_plain_strings_through():
+    """Groq and the OpenAI-compatible backends already return a string."""
+    from finrag.agent import answer_text
+
+    assert answer_text("  Net sales were $391,035 million.  ") == (
+        "Net sales were $391,035 million."
+    )
+
+
+def test_answer_text_joins_multiple_blocks():
+    from finrag.agent import answer_text
+
+    assert answer_text([{"text": "Revenue rose. "}, {"text": "Margins held."}]) == (
+        "Revenue rose. Margins held."
+    )
