@@ -125,6 +125,11 @@ def _stubbed_app(monkeypatch, agent, *, index=(True, 12376, "ready")):
     monkeypatch.setenv("FINRAG_LLM_BACKEND", "ollama")
     monkeypatch.setattr(finrag.agent, "build_agent", lambda **kwargs: agent)
     monkeypatch.setattr(finrag.ingest.index, "index_status", lambda *a, **k: index)
+    # load_agent opens the store before it builds the agent, and opening the
+    # store loads a sentence-transformer. Stubbing only build_agent left the
+    # embedding model as a hard requirement of a UI test -- fine locally, and
+    # an ImportError in CI, which installs no [local] extra.
+    monkeypatch.setattr(finrag.ingest.index, "open_store", lambda *a, **k: object())
     st.cache_resource.clear()
     return AppTest.from_file(APP, default_timeout=60)
 
