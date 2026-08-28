@@ -282,6 +282,31 @@ The default model is `cross-encoder/ms-marco-MiniLM-L-6-v2` (~80MB) rather than 
 `bge-reranker-base` (~1.1GB), because on an 8GB machine the latter competes with the embedding
 model already resident.
 
+### Chunking: semantic or recursive
+
+`FINRAG_CHUNK_STRATEGY` picks between structure-aware chunking (`unstructured` partitions the
+filing HTML into titles, paragraphs and tables, then groups under headings) and fixed-width
+recursive splitting. The claim that structure-aware chunking is better was inherited, never
+measured — the committed fixtures are too small to tell the two apart, which is why it stayed
+untested for so long. Both were indexed over the 50 real filings and scored on the 30-probe set:
+
+| chunking | chunks | mrr (no rerank) | mrr (with rerank) |
+|---|---|---|---|
+| **semantic** | 12,376 | **0.720** | **0.824** |
+| recursive | 11,477 | 0.567 | 0.793 |
+
+`hit_rate` is 1.000 in all four cells, so this is entirely a ranking difference.
+
+Semantic chunking wins, and stays the default. The more useful result is the second column against
+the third: **the reranker absorbs most of what chunking was buying.** A 27% MRR gap without
+reranking narrows to 4% with it. That makes sense — good chunk boundaries and a cross-encoder are
+both ways of getting the right passage to the top, so they are partly redundant.
+
+The practical reading: if ingest simplicity matters, recursive chunking plus reranking reaches
+0.793 against semantic's 0.824, at 96% of the quality with none of the `unstructured` dependency,
+no spaCy model download, and a much faster index. Structure-aware chunking earns its place here
+because the dependency is already paid for, not because the pipeline would collapse without it.
+
 Hybrid alone hid a real trade, which is worth recording because reranking is what answered it. BM25
 recovers the phrase probe but *demotes* numeric ones — "net income for the year" matches lexically
 across many chunks, so JP Morgan's net income fell from rank 9 to 18 and Amazon's net loss from 2
