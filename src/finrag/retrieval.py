@@ -217,9 +217,13 @@ def search_filing(
 
     where = {"$and": [{"ticker": ticker.upper()}, {"year": int(fiscal_year)}]}
     k = settings.retrieval_k
+    # Reranking can only promote what retrieval surfaced, so it needs a wider
+    # pool than the caller ultimately wants. Without this the reranker would be
+    # reordering the same k chunks it is meant to be choosing between.
+    fetch = max(k, settings.rerank_candidates) if settings.rerank else k
     try:
         search_text = expand_query(query) if settings.query_expansion else query
-        docs = store.similarity_search(search_text, k=k, filter=where)
+        docs = store.similarity_search(search_text, k=fetch, filter=where)
     except Exception as exc:  # noqa: BLE001 - surfaced to the agent as text, not raised
         log.error("retrieval failed for %s FY%s: %s", ticker, fiscal_year, exc)
         docs = []
@@ -228,9 +232,16 @@ def search_filing(
         # The lexical side always sees the raw question. Expansion is a
         # vector-space trick -- padding the query with financial boilerplate --
         # and BM25 would read that padding as nine more terms to match on.
-        lexical = _lexical_candidates(query, ticker, fiscal_year, store, k)
+        lexical = _lexical_candidates(query, ticker, fiscal_year, store, fetch)
         if lexical:
-            docs = reciprocal_rank_fusion([docs, lexical])[:k]
+            docs = reciprocal_rank_fusion([docs, lexical])[:fetch]
+
+    if settings.rerank:
+        from .rerank import rerank
+
+        docs = rerank(query, docs, top_k=k, settings=settings)
+    else:
+        docs = docs[:k]
     if apply_context_budget:
         docs = trim_to_token_budget(docs, settings.max_context_tokens)
     return Retrieved(documents=docs, ticker=ticker.upper(), fiscal_year=int(fiscal_year))

@@ -48,7 +48,9 @@ def test_hybrid_recovers_a_phrase_the_vector_search_ranks_low():
     # The vector side never surfaces the target.
     store = FakeStore(vector_hits=filler, all_chunks=[*filler, target])
 
-    settings = replace(Settings(), retrieval_mode="hybrid", retrieval_k=5, query_expansion=False)
+    settings = replace(
+        Settings(), retrieval_mode="hybrid", retrieval_k=5, query_expansion=False, rerank=False
+    )
     found = search_filing(
         "intense competition",
         "AAPL",
@@ -67,7 +69,9 @@ def test_vector_mode_leaves_retrieval_untouched():
     target = _doc("c-target", "We face intense competition.")
     store = FakeStore(vector_hits=filler, all_chunks=[*filler, target])
 
-    settings = replace(Settings(), retrieval_mode="vector", retrieval_k=5, query_expansion=False)
+    settings = replace(
+        Settings(), retrieval_mode="vector", retrieval_k=5, query_expansion=False, rerank=False
+    )
     found = search_filing(
         "intense competition",
         "AAPL",
@@ -91,7 +95,9 @@ def test_lexical_side_gets_the_raw_query_not_the_expanded_one():
 
     chunks = [_doc(f"c{i}", f"chunk {i} about revenue") for i in range(4)]
     store = FakeStore(vector_hits=chunks, all_chunks=chunks)
-    settings = replace(Settings(), retrieval_mode="hybrid", retrieval_k=3, query_expansion=True)
+    settings = replace(
+        Settings(), retrieval_mode="hybrid", retrieval_k=3, query_expansion=True, rerank=False
+    )
 
     search_filing(
         "total revenue", "AAPL", 2023, store=store, settings=settings, apply_context_budget=False
@@ -112,7 +118,9 @@ def test_hybrid_degrades_to_vector_when_lexical_scoring_is_unavailable(monkeypat
     monkeypatch.setattr(retrieval, "_bm25_for_filing", lambda *a, **k: None)
     chunks = [_doc(f"c{i}", f"chunk {i}") for i in range(4)]
     store = FakeStore(vector_hits=chunks, all_chunks=chunks)
-    settings = replace(Settings(), retrieval_mode="hybrid", retrieval_k=3, query_expansion=False)
+    settings = replace(
+        Settings(), retrieval_mode="hybrid", retrieval_k=3, query_expansion=False, rerank=False
+    )
 
     found = search_filing(
         "revenue", "AAPL", 2023, store=store, settings=settings, apply_context_budget=False

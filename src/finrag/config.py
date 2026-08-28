@@ -73,6 +73,33 @@ class Settings:
         default_factory=lambda: _env("FINRAG_RETRIEVAL_MODE", "hybrid").strip().lower()
     )
 
+    # Reranking reorders a wider candidate pool with a model that scores
+    # query-document pairs jointly, rather than comparing two independently
+    # computed vectors. On by default: it moved mrr from 0.720 to 0.824 on the
+    # 30-probe corpus set, the same bar hybrid retrieval had to clear.
+    #
+    # It costs about 730ms per query -- 106ms to 836ms, scoring fifty pairs
+    # through a cross-encoder. That is roughly 1% of an agent answer, which
+    # takes tens of seconds across several LLM calls, and would be a much larger
+    # share of a bare search endpoint. Set FINRAG_RERANK=0 there.
+    rerank: bool = field(
+        default_factory=lambda: (
+            _env("FINRAG_RERANK", "1").strip().lower() not in ("0", "false", "no", "")
+        )
+    )
+    # ms-marco-MiniLM-L-6-v2 is ~80MB. bge-reranker-base scores better and is
+    # ~1.1GB, which on an 8GB machine competes with the embedding model already
+    # resident -- a real constraint here, not a hypothetical one.
+    rerank_model: str = field(
+        default_factory=lambda: _env("FINRAG_RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+    )
+    # How many candidates to fetch before reordering. Reranking can only
+    # promote what retrieval surfaced, so this is the real recall ceiling;
+    # retrieval_k is what survives to the model.
+    rerank_candidates: int = field(
+        default_factory=lambda: int(_env("FINRAG_RERANK_CANDIDATES", "50"))
+    )
+
     # Off by default because it was measured, not assumed. See
     # retrieval.expand_query: on the real corpus it halved hit rate.
     query_expansion: bool = field(

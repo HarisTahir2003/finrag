@@ -31,6 +31,7 @@ which is the usual failure mode when an LLM is asked to do arithmetic on a docum
 | `src/finrag/cache.py` | SQLite LLM response cache: unchanged re-runs cost zero tokens. |
 | `src/finrag/eval/checkpoint.py` | Per-case eval checkpointing, so a run survives a daily quota. |
 | `src/finrag/retrieval.py` | Filtered search, hybrid BM25 + vector fusion, context budgeting. |
+| `src/finrag/rerank.py` | Cross-encoder reranking over the fused candidates. |
 | `src/finrag/calculator.py` | AST-whitelisted arithmetic — the agent's calculator tool. |
 | `src/finrag/agent.py` | Tool-calling agent over retrieval + calculator. |
 | `src/finrag/eval/` | Three evaluation tiers, and the CI quality gate. |
@@ -38,7 +39,7 @@ which is the usual failure mode when an LLM is asked to do arithmetic on a docum
 | `src/finrag/cli.py` | `finrag download / index / status / ask / eval`. |
 | `Part3.ipynb` | Narrative walkthrough of the pipeline, importing from the package. |
 | `app.py` | Streamlit chat interface. |
-| `tests/` | 225 tests over parsing, fiscal years, chunk identity, calculator safety, dataset validity and the gate. |
+| `tests/` | 232 tests over parsing, fiscal years, chunk identity, calculator safety, dataset validity and the gate. |
 
 The original coursework project had two further modules — extractive QnA over FinanceBench, and
 earnings-call summarization on ECTSum. Neither is part of this repository, which is the SEC filing
@@ -251,26 +252,41 @@ the other.
 The MRR is the honest number and the interesting one: the right chunk is nearly always retrieved,
 but ranked second to seventh rather than first.
 
-### Hybrid retrieval
+### Hybrid retrieval and reranking
 
-Retrieval fuses BM25 with the vector search by reciprocal rank fusion (`FINRAG_RETRIEVAL_MODE`,
-default `hybrid`; `vector` restores the older path). Measured on the 30-probe corpus set:
+Retrieval fuses BM25 with the vector search by reciprocal rank fusion, then reorders the result
+with a cross-encoder. Both are on by default (`FINRAG_RETRIEVAL_MODE=vector` and `FINRAG_RERANK=0`
+restore the older paths). Measured on the 30-probe corpus set:
 
-| mode | hit_rate | mrr |
-|---|---|---|
-| vector | 0.967 | 0.695 |
-| **hybrid** | **1.000** | **0.720** |
+| mode | rerank | hit_rate | mrr |
+|---|---|---|---|
+| vector | off | 0.967 | 0.695 |
+| vector | on | 1.000 | 0.808 |
+| hybrid | off | 1.000 | 0.720 |
+| **hybrid** | **on** | **1.000** | **0.824** |
 
-It was adopted because it moved those numbers, not because hybrid search is fashionable — the same
-bar query expansion was held to and failed.
+Each was adopted because it moved those numbers, not because the technique is fashionable — the
+same bar query expansion was held to and failed.
 
-The aggregate hides a real trade, which is worth stating rather than rounding away. The probe that
-motivated this hunts the phrase *"intense competition"*; pure vector search ranked it 26th, and
-lexical scoring finds it. But BM25 also *demotes* some numeric probes: "net income for the year"
-matches lexically across many chunks, so JP Morgan's net income falls from rank 9 to 18 and
-Amazon's net loss from 2 to 7. Hybrid wins on aggregate and fixes a blind spot; it is not
-uniformly better per probe. Reranking is the next lever precisely because it should recover those
-demotions.
+The two fix different things, which is why both are on. Hybrid fixes *recall*: the probe that
+motivated it hunts the phrase *"intense competition"*, which pure vector search ranked 26th.
+Reranking fixes *ordering*: a bi-encoder compares a query vector against chunk vectors computed at
+index time, before anyone knew what would be asked; a cross-encoder reads the pair together. That
+is far too slow to run over 12,376 chunks and exactly right for reordering fifty.
+
+**Reranking costs about 730ms per query** — 106ms to 836ms, scoring fifty pairs. That is roughly 1%
+of an agent answer, which spans tens of seconds and several LLM calls, and would be a much larger
+share of a bare search endpoint; `FINRAG_RERANK=0` is the switch for that case.
+
+The default model is `cross-encoder/ms-marco-MiniLM-L-6-v2` (~80MB) rather than the stronger
+`bge-reranker-base` (~1.1GB), because on an 8GB machine the latter competes with the embedding
+model already resident.
+
+Hybrid alone hid a real trade, which is worth recording because reranking is what answered it. BM25
+recovers the phrase probe but *demotes* numeric ones — "net income for the year" matches lexically
+across many chunks, so JP Morgan's net income fell from rank 9 to 18 and Amazon's net loss from 2
+to 7. Hybrid won on aggregate while being worse on those probes. Reranking was the stated remedy,
+and the MRR jump from 0.720 to 0.824 is it.
 
 `rank_bm25` is a base dependency rather than an extra, deliberately: with hybrid as the default,
 putting its scorer behind an optional extra would mean two correct installs retrieving differently
@@ -375,7 +391,7 @@ inheriting another's answers.
 pytest
 ```
 
-225 tests, no API key and no network required — they run against committed SEC-format fixtures.
+232 tests, no API key and no network required — they run against committed SEC-format fixtures.
 
 ## Known limitations
 

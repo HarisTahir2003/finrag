@@ -7,8 +7,11 @@ and deterministically. The live path is exercised by `finrag eval retrieval
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from langchain_core.documents import Document
 
+from finrag.config import get_settings
 from finrag.eval.retrieval_eval import evaluate_case, evaluate_retrieval
 from finrag.eval.schema import RetrievalCase
 
@@ -39,8 +42,10 @@ CASE = RetrievalCase(
 
 
 def test_hit_records_the_rank():
+    # rerank off: this asserts the rank the *retriever* produced, and a
+    # cross-encoder would reorder the two documents out from under it.
     store = StubStore([doc("nothing here"), doc("| Total current assets | 143,566 |")])
-    result = evaluate_case(CASE, store=store)
+    result = evaluate_case(CASE, store=store, settings=replace(get_settings(), rerank=False))
     assert result.hit
     assert result.rank == 2
     assert result.matched == "143,566"
@@ -109,8 +114,6 @@ def test_query_expansion_is_off_by_default():
 
 def test_search_uses_the_raw_query_unless_expansion_is_enabled(monkeypatch):
     """The knob has to actually reach the vector store, not just exist."""
-    from dataclasses import replace
-
     from finrag.config import Settings
     from finrag.retrieval import search_filing
 
