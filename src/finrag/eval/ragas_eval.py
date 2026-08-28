@@ -153,6 +153,50 @@ def build_samples(
     return samples
 
 
+def _aggregate_scores(result) -> dict[str, float]:
+    """Mean score per metric from a RAGAS EvaluationResult.
+
+    `dict(result)` looks like the obvious way to do this and is a trap.
+    EvaluationResult defines `__getitem__(key: str)` but no `keys()`, no
+    `__iter__` and no `__len__`, so `dict()` falls back to Python's legacy
+    sequence protocol and asks for `result[0]` -- which reaches
+    `_scores_dict[0]` and raises `KeyError: 0`. It fails *after* every judge
+    call has been paid for, which cost a fourteen-minute run.
+
+    `_repr_dict` is what the class itself builds in `__post_init__`: one
+    `safe_nanmean` per metric. Private, hence the fallbacks -- and the nanmean
+    matters, because a judge response that fails to parse leaves a NaN in the
+    column and a plain mean would turn one bad parse into a NaN for the whole
+    metric.
+    """
+    import math
+
+    repr_dict = getattr(result, "_repr_dict", None)
+    if isinstance(repr_dict, dict) and repr_dict:
+        return {
+            k: float(v)
+            for k, v in repr_dict.items()
+            if isinstance(v, (int, float)) and not math.isnan(float(v))
+        }
+
+    scores_dict = getattr(result, "_scores_dict", None)
+    if isinstance(scores_dict, dict) and scores_dict:
+        out: dict[str, float] = {}
+        for name, values in scores_dict.items():
+            usable = [float(v) for v in values if isinstance(v, (int, float)) and not math.isnan(v)]
+            if usable:
+                out[name] = sum(usable) / len(usable)
+        return out
+
+    # Last resort: the public frame. Metric columns are the numeric ones.
+    frame = result.to_pandas()
+    return {
+        str(col): float(frame[col].mean())
+        for col in frame.columns
+        if frame[col].dtype.kind in "fi" and not math.isnan(float(frame[col].mean()))
+    }
+
+
 def evaluate_ragas(
     cases: list[AgentCase] | None = None,
     store=None,
@@ -224,7 +268,7 @@ def evaluate_ragas(
         run_config=RunConfig(timeout=300, max_retries=10, max_wait=60, max_workers=1),
     )
 
-    scores = {k: float(v) for k, v in dict(result).items() if isinstance(v, (int, float))}
+    scores = _aggregate_scores(result)
     return RagasReport(
         samples=samples,
         scores=scores,

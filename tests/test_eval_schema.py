@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from finrag.eval.schema import load_agent_cases, load_retrieval_cases
 
 
@@ -94,3 +96,53 @@ def test_answer_text_joins_multiple_blocks():
     assert answer_text([{"text": "Revenue rose. "}, {"text": "Margins held."}]) == (
         "Revenue rose. Margins held."
     )
+
+
+def test_ragas_scores_come_from_the_aggregate_not_from_dict():
+    """`dict(EvaluationResult)` raises KeyError: 0 -- after the judge is paid for.
+
+    The class defines __getitem__(key: str) but no keys(), no __iter__ and no
+    __len__, so dict() falls back to the legacy sequence protocol and asks for
+    result[0]. That reached _scores_dict[0] and killed a fourteen-minute run at
+    the very last line, discarding every judge call.
+    """
+    from finrag.eval.ragas_eval import _aggregate_scores
+
+    class FakeEvaluationResult:
+        """Shaped like the real one: subscriptable by name, not iterable."""
+
+        def __init__(self):
+            self._scores_dict = {"faithfulness": [1.0, 0.5], "answer_relevancy": [0.8, 0.6]}
+            self._repr_dict = {"faithfulness": 0.75, "answer_relevancy": 0.7}
+
+        def __getitem__(self, key: str):
+            return self._scores_dict[key]
+
+    result = FakeEvaluationResult()
+
+    with pytest.raises(KeyError):
+        dict(result)  # the old implementation; pinned so the trap stays documented
+
+    assert _aggregate_scores(result) == {"faithfulness": 0.75, "answer_relevancy": 0.7}
+
+
+def test_ragas_aggregate_survives_a_metric_that_failed_to_parse():
+    """One unparseable judge response must not NaN out a whole metric."""
+    import math
+
+    from finrag.eval.ragas_eval import _aggregate_scores
+
+    class NoReprDict:
+        def __init__(self):
+            self._scores_dict = {
+                "faithfulness": [1.0, float("nan"), 0.5],
+                "context_precision": [float("nan"), float("nan")],
+            }
+
+        def __getitem__(self, key: str):
+            return self._scores_dict[key]
+
+    scores = _aggregate_scores(NoReprDict())
+    assert scores["faithfulness"] == pytest.approx(0.75)
+    assert "context_precision" not in scores, "all-NaN metric is dropped, not reported as NaN"
+    assert all(not math.isnan(v) for v in scores.values())
