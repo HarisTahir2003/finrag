@@ -117,6 +117,12 @@ def _stubbed_app(monkeypatch, agent, *, index=(True, 12376, "ready")):
     import finrag.agent
     import finrag.ingest.index
 
+    # A keyless backend, so the test does not depend on a provider key existing.
+    # Without this the default is anthropic, the app correctly refuses to run
+    # without ANTHROPIC_API_KEY, and every assertion sees an empty page -- which
+    # passed locally off a .env and failed in CI, where there is none.
+    # setenv wins over .env either way: load_dotenv never overrides.
+    monkeypatch.setenv("FINRAG_LLM_BACKEND", "ollama")
     monkeypatch.setattr(finrag.agent, "build_agent", lambda **kwargs: agent)
     monkeypatch.setattr(finrag.ingest.index, "index_status", lambda *a, **k: index)
     st.cache_resource.clear()
