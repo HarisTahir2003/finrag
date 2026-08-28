@@ -78,6 +78,17 @@ def _client(monkeypatch, *, agent=None, chunks=12376, filings=50):
     return TestClient(api.app)
 
 
+def test_root_points_at_the_docs(monkeypatch):
+    """The only URL anyone tries after starting the server used to 404."""
+    with _client(monkeypatch, agent=None, chunks=0) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["docs"] == "/docs"
+    assert "POST /ask" in body["endpoints"]
+
+
 def test_health_is_cheap_and_always_ok(monkeypatch):
     """Liveness must not touch the index or a provider."""
     with _client(monkeypatch, agent=None, chunks=0) as client:

@@ -169,6 +169,30 @@ def _run(agent, question: str) -> tuple[str, list[dict]]:
 # ------------------------------------------------------------- endpoints
 
 
+@app.get("/", tags=["ops"])
+def index() -> dict:
+    """What this is and where to go.
+
+    A bare 404 at the front door is a bad answer to the only URL someone
+    naturally tries after starting the server. This is deliberately not a
+    redirect to /docs: a browser gets its bearings either way, and a client
+    gets a machine-readable list instead of a 307 with no body.
+    """
+    return {
+        "service": "finrag",
+        "version": app.version,
+        "docs": "/docs",
+        "endpoints": {
+            "GET /health": "liveness",
+            "GET /ready": "readiness — 503 when the index cannot serve",
+            "GET /status": "configuration and corpus size",
+            "POST /search": "retrieval only, no LLM",
+            "POST /ask": "answer with sources and calculations",
+            "POST /ask/stream": "the same run, as server-sent events",
+        },
+    }
+
+
 @app.get("/health", tags=["ops"])
 def health() -> dict:
     """Liveness. Cheap on purpose -- it must not touch the index or a provider."""
