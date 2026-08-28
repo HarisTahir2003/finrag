@@ -202,8 +202,9 @@ Three tiers, separated by what they cost to run.
 
 ```bash
 finrag eval retrieval --fixtures --gate   # no LLM, no API key, free — this is the CI gate
-finrag eval ragas --limit 5               # needs GOOGLE_API_KEY
-finrag eval agent                         # needs GOOGLE_API_KEY
+finrag eval retrieval                     # same, against the real downloaded corpus
+finrag eval ragas --limit 10              # needs whichever key FINRAG_LLM_BACKEND wants
+finrag eval agent                         # same
 ```
 
 **Retrieval** is scored by exact substring matching against a labelled set, so it is deterministic
@@ -212,23 +213,67 @@ chunks whose ticker and fiscal year actually match the query. That last one is t
 regression guard on the metadata bug: under the old indexing it would read 0 for six tickers.
 
 `--fixtures` indexes the committed test filings into a throwaway store, so the gate runs on a fresh
-clone with nothing downloaded. Current measured performance on that corpus:
+clone with nothing downloaded. Those fixtures are three small documents, and they flatter the
+retriever — worth stating plainly, because a table of 1.000s invites the reader to assume it
+describes real performance:
 
-| metric | value |
-|---|---|
-| hit_rate | 1.000 |
-| mrr | 0.926 |
-| filter_accuracy | 1.000 |
+| metric | fixtures (CI gate) | 50 real filings |
+|---|---|---|
+| hit_rate | 1.000 | **0.889** |
+| mrr | 0.944 | **0.553** |
+| filter_accuracy | 1.000 | 1.000 |
+
+The real-corpus column is the honest one. Its single miss is a narrative probe whose target chunk
+ranks 26th, past the retrieval depth — a genuine weakness, left failing rather than tuned away.
+
+`filter_accuracy` holding at 1.000 on both is the metadata fix doing its job: no query ever
+retrieves a chunk from the wrong company or the wrong fiscal year.
 
 **RAGAS** scores faithfulness, answer relevancy and context precision with contexts drawn from the
-retriever. Pass `--gold-context` to reproduce the original measurement, which fed the dataset's own
-gold evidence in as context and so never exercised retrieval at all. The gap between the two runs
-is the retrieval contribution, which was previously invisible.
+retriever. `--gold-context` swaps in oracle context — the indexed chunks of the real filing that
+provably contain the figures the reference reports — so the gap between the two runs isolates the
+retrieval contribution, which the original measurement could not see.
+
+Measured on the five quantitative cases, which are the ones an oracle context can be derived for
+(narrative cases carry no figures to select on, and are skipped rather than scored against
+something invented):
+
+| metric | retrieved (k=20) | oracle |
+|---|---|---|
+| faithfulness | 0.900 | 0.560 |
+| answer_relevancy | 0.567 | 0.510 |
+| context_precision | 0.113 | 0.650 |
+
+Two of those deserve comment rather than celebration.
+
+**Retrieval beats the oracle on faithfulness, and that is a fact about the metric.** Faithfulness
+asks whether each claim is supported by the supplied context. Twenty chunks support almost any
+claim somewhere; one 844-character oracle chunk does not contain the intermediate arithmetic, so
+correct reasoning scores as unfaithful. RAGAS faithfulness rises with context size almost
+mechanically — which is precisely why the original notebook's 0.7393, measured on small perfect
+contexts, is not comparable to any number here, in either direction.
+
+**context_precision of 0.113 says roughly two chunks in twenty are relevant.** That is the cost of
+the retrieval depth the hit-rate column wants, and the concrete argument for a reranker. It is
+reported rather than hidden because an unmeasured pipeline would simply not know.
 
 **Agent** runs the full tool-calling loop over the 20-question set and scores tool-path accuracy,
 calculator compliance, and how often the agent asks for a ticker it was already given — the
 dominant failure mode in the original run, tracked separately because it is a prompt problem rather
 than a reasoning one.
+
+| metric | value |
+|---|---|
+| tool_path_accuracy | 0.90 |
+| calculator_compliance | 0.90 |
+| answered_with_figures | 0.95 |
+| clarification_requests | **0.00** |
+| errors | 0 |
+
+That last row is the one the rebuild was for. The original suite's single reported figure was a
+60% "functional tool call accuracy", and its largest component was the agent replying "which
+company are you interested in?" about a ticker the question had already named. Across twenty cases
+it now never happens.
 
 Every run is logged to `results/` as JSON, and to MLflow when it is installed, alongside the
 configuration that produced it — including the backend and the *resolved* model name, since
