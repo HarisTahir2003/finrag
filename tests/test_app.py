@@ -183,3 +183,74 @@ def test_an_empty_answer_does_not_render_a_blank_bubble(monkeypatch):
     at.chat_input[0].set_value("anything").run()
 
     assert "returned nothing" in " ".join(str(m.value) for m in at.markdown)
+
+
+# ------------------------------------------------------ rendering and memory
+
+
+def test_escape_dollars_stops_currency_becoming_latex():
+    """Two dollar figures in a sentence made everything between them maths."""
+    from finrag.presentation import escape_dollars
+
+    out = escape_dollars("net sales of $574,785 million, compared to $383,285 million")
+
+    assert out.count("\\$") == 2
+    assert "$574,785" not in out.replace("\\$", "$@")  # no unescaped delimiter left
+
+
+def test_escape_dollars_leaves_code_spans_alone():
+    """A backslash inside code renders as a backslash."""
+    from finrag.presentation import escape_dollars
+
+    assert escape_dollars("use `$5` here and $10 there") == "use `$5` here and \\$10 there"
+
+
+def test_escape_dollars_is_idempotent():
+    from finrag.presentation import escape_dollars
+
+    once = escape_dollars("costs $5")
+    assert escape_dollars(once) == once
+
+
+def test_follow_up_questions_receive_the_prior_turns(monkeypatch):
+    """The agent's prompt always had a chat_history slot; the UI never filled it.
+
+    Without this, "explain why apple's was higher" straight after a comparison
+    got "please specify which year" -- the front end forgetting, read by the
+    user as the agent being dim.
+    """
+    seen = {}
+
+    class _HistoryAgent(_StubAgent):
+        def stream(self, inputs):
+            seen["history"] = inputs.get("chat_history")
+            yield from super().stream(inputs)
+
+    at = _stubbed_app(monkeypatch, _HistoryAgent())
+    at.run()
+    at.chat_input[0].set_value("first question").run()
+    assert seen["history"] == [], "the opening turn has no history"
+
+    at.chat_input[0].set_value("and why is that?").run()
+    contents = [m.content for m in seen["history"]]
+    assert "first question" in contents, "the follow-up must see what came before"
+    assert len(seen["history"]) == 2, "one user turn and one answer"
+
+
+def test_history_carries_the_unescaped_text(monkeypatch):
+    """Escaping is for the renderer. The agent should not read backslashes."""
+    seen = {}
+
+    class _HistoryAgent(_StubAgent):
+        def stream(self, inputs):
+            seen["history"] = inputs.get("chat_history")
+            yield from super().stream(inputs)
+
+    at = _stubbed_app(monkeypatch, _HistoryAgent(output="Net sales were $574,785 million."))
+    at.run()
+    at.chat_input[0].set_value("net sales?").run()
+    at.chat_input[0].set_value("and the year before?").run()
+
+    answers = [m.content for m in seen["history"] if "574,785" in m.content]
+    assert answers, "the prior answer should be in history"
+    assert "\\$" not in answers[0]

@@ -23,7 +23,12 @@ from finrag.agent import answer_text
 from finrag.config import get_settings
 from finrag.ingest.download import list_filings
 from finrag.llm import default_model_for, required_api_key
-from finrag.presentation import calculator_expression, describe_action, parse_passages
+from finrag.presentation import (
+    calculator_expression,
+    describe_action,
+    escape_dollars,
+    parse_passages,
+)
 
 # Same search order as the CLI: the .env beside the working directory wins, and
 # a real exported variable beats both.
@@ -154,9 +159,28 @@ if "messages" not in st.session_state:
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        st.markdown(escape_dollars(message["content"]))
         if message.get("steps"):
             render_sources(message["steps"])
+
+
+def chat_history():
+    """Prior turns as LangChain messages.
+
+    The agent's prompt has always carried a `chat_history` placeholder and the
+    UI never filled it, so every question started from nothing: asking "explain
+    why apple's net income was higher" straight after a comparison got "please
+    specify which year", which reads as the agent being dim rather than the
+    front end forgetting.
+    """
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    messages = []
+    for turn in st.session_state.messages:
+        role = HumanMessage if turn["role"] == "user" else AIMessage
+        messages.append(role(content=turn["content"]))
+    return messages
+
 
 placeholder = "Compare Apple and Amazon's current ratio in fiscal 2023"
 prompt = st.chat_input(placeholder, disabled=not index_ready)
@@ -165,9 +189,10 @@ if prompt:
     if key_var is not None and not os.environ.get(key_var):
         st.warning(f"Enter a {settings.llm_backend.title()} API key in the sidebar first.")
     else:
+        history = chat_history()
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
-            st.markdown(prompt)
+            st.markdown(escape_dollars(prompt))
 
         with st.chat_message("assistant"):
             steps: list[dict] = []
@@ -178,7 +203,7 @@ if prompt:
             with st.status("Reading filings…", expanded=True) as status:
                 try:
                     agent = load_agent(api_key[-8:])
-                    for chunk in agent.stream({"input": prompt}):
+                    for chunk in agent.stream({"input": prompt, "chat_history": history}):
                         for action in chunk.get("actions", []):
                             st.write(describe_action(action.tool, action.tool_input))
                         for step in chunk.get("steps", []):
@@ -197,7 +222,7 @@ if prompt:
                     status.update(label="Failed", state="error", expanded=False)
 
             answer = answer.strip() or "The agent returned nothing."
-            st.markdown(answer)
+            st.markdown(escape_dollars(answer))
             render_sources(steps)
             st.session_state.messages.append(
                 {"role": "assistant", "content": answer, "steps": steps}

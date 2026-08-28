@@ -90,3 +90,27 @@ def summarise_steps(steps: list[dict]) -> dict:
                 }
             )
     return {"sources": sources, "calculations": calculations}
+
+
+# A `$` opens LaTeX in most markdown renderers, so a sentence carrying two
+# dollar figures -- which is most sentences here -- gets everything between them
+# rendered as maths. "$574,785 million in 2023, compared to Apple's $383,285"
+# came out as one italic equation.
+_CODE_SPAN = re.compile(r"(```.*?```|`[^`]*`)", re.DOTALL)
+
+
+def escape_dollars(text: str) -> str:
+    """Neutralise `$` as a maths delimiter, leaving code spans alone.
+
+    Escaping inside a code span would show a literal backslash, so the text is
+    split on fenced blocks and inline code first and only the prose between
+    them is escaped.
+    """
+    if not text:
+        return text
+    parts = _CODE_SPAN.split(text)
+    # split() with a capturing group alternates prose, delimiter, prose...
+    return "".join(
+        part if index % 2 else part.replace("\\$", "$").replace("$", "\\$")
+        for index, part in enumerate(parts)
+    )
