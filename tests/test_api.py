@@ -54,7 +54,13 @@ class _StubAgent:
 
 
 def _client(monkeypatch, *, agent=None, chunks=12376, filings=50):
-    """A client whose startup installs stubs instead of loading the real thing."""
+    """A client whose startup installs stubs instead of loading the real thing.
+
+    index_status is stubbed at its own module because /ready resolves it lazily
+    -- the same helper the Streamlit sidebar uses, so both surfaces agree about
+    what "no index" means.
+    """
+    import finrag.ingest.index
     from finrag.config import get_settings
 
     settings = get_settings()
@@ -64,8 +70,10 @@ def _client(monkeypatch, *, agent=None, chunks=12376, filings=50):
         api._state["store"] = object()
         api._state["agent"] = agent
 
+    status = (True, chunks, "ready") if chunks else (False, 0, "index is empty")
     monkeypatch.setattr(api, "_load", fake_load)
     monkeypatch.setattr(api, "_index_size", lambda: chunks)
+    monkeypatch.setattr(finrag.ingest.index, "index_status", lambda *a, **k: status)
     monkeypatch.setattr("finrag.ingest.download.list_filings", lambda **kw: [None] * filings)
     return TestClient(api.app)
 

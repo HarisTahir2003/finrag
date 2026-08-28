@@ -161,3 +161,25 @@ def collection_size(settings: Settings | None = None) -> int:
     """How many chunks are currently in the index."""
     store = open_store(settings or get_settings())
     return store._collection.count()
+
+
+def index_status(settings: Settings | None = None) -> tuple[bool, int, str]:
+    """Whether this index can answer anything: (ready, chunk count, reason).
+
+    One helper rather than three call sites each deciding for itself what
+    "no index" means. An absent directory, a present-but-empty collection and
+    an unreadable one are three different problems with the same consequence,
+    and both the API's readiness probe and the UI's disabled input need to
+    agree about them.
+    """
+    settings = settings or get_settings()
+
+    if not settings.index_dir.exists():
+        return False, 0, "no index found"
+    try:
+        size = collection_size(settings)
+    except Exception as exc:  # noqa: BLE001 - an unreadable index is not-ready, not a crash
+        return False, 0, f"index unreadable: {exc}"
+    if size == 0:
+        return False, 0, "index is empty"
+    return True, size, "ready"

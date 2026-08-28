@@ -78,21 +78,13 @@ with st.sidebar:
         language=None,
     )
 
-    index_ready = False
-    if settings.index_dir.exists():
-        try:
-            from finrag.ingest.index import collection_size
+    from finrag.ingest.index import index_status
 
-            size = collection_size(settings)
-            index_ready = size > 0
-            if index_ready:
-                st.success(f"{size:,} chunks indexed")
-            else:
-                st.error("Index is empty")
-        except Exception as exc:  # noqa: BLE001 - the sidebar must not take the page down
-            st.warning(f"Index unreadable: {exc}")
+    index_ready, size, reason = index_status(settings)
+    if index_ready:
+        st.success(f"{size:,} chunks indexed")
     else:
-        st.error("No index found")
+        st.error(reason.capitalize())
 
     if not index_ready:
         st.caption(f"{len(list_filings(settings=settings))} filings downloaded. Build one with:")

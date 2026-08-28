@@ -184,12 +184,11 @@ def ready() -> dict:
     load balancer should stop sending it traffic rather than watch it 500 per
     request.
     """
-    try:
-        size = _index_size()
-    except Exception as exc:  # noqa: BLE001 - reported as not-ready, not as a crash
-        raise HTTPException(status_code=503, detail=f"index unreadable: {exc}") from exc
-    if size == 0:
-        raise HTTPException(status_code=503, detail="index is empty; run `finrag index`")
+    from .ingest.index import index_status
+
+    ready, size, reason = index_status(_state["settings"])
+    if not ready:
+        raise HTTPException(status_code=503, detail=f"{reason}; run `finrag index`")
     return {"status": "ready", "chunks": size}
 
 

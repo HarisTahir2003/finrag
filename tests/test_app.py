@@ -101,28 +101,43 @@ class _StubAgent:
         yield {"output": self._output}
 
 
-def _stubbed_app(monkeypatch, agent):
-    """AppTest runs app.py in its own namespace, so the stub goes in at the source.
+def _stubbed_app(monkeypatch, agent, *, index=(True, 12376, "ready")):
+    """AppTest runs app.py in its own namespace, so stubs go in at the source.
 
-    app.py resolves build_agent lazily inside load_agent, so patching
-    finrag.agent.build_agent reaches it. st.cache_resource would otherwise hold
-    the first stub for the whole process.
+    app.py resolves build_agent and index_status lazily, so patching the
+    modules they live in reaches it. st.cache_resource would otherwise hold the
+    first stub for the whole process.
+
+    The index is stubbed because a UI test should not need a 134MB corpus --
+    CI has no index, and without this the chat input is disabled and nothing
+    renders at all, which is how these first failed.
     """
     import streamlit as st
 
     import finrag.agent
+    import finrag.ingest.index
 
     monkeypatch.setattr(finrag.agent, "build_agent", lambda **kwargs: agent)
+    monkeypatch.setattr(finrag.ingest.index, "index_status", lambda *a, **k: index)
     st.cache_resource.clear()
     return AppTest.from_file(APP, default_timeout=60)
 
 
-def test_app_loads_without_error():
-    at = AppTest.from_file(APP, default_timeout=60)
+def test_app_loads_without_error(monkeypatch):
+    at = _stubbed_app(monkeypatch, None)
     at.run()
 
     assert not at.exception
     assert "SEC filing analyst" in [t.value for t in at.title]
+
+
+def test_no_index_disables_the_chat_and_says_why(monkeypatch):
+    """Alive with no corpus: refuse at the door rather than deep in retrieval."""
+    at = _stubbed_app(monkeypatch, None, index=(False, 0, "no index found"))
+    at.run()
+
+    assert at.chat_input[0].disabled
+    assert any("No index found" in str(e.value) for e in at.error)
 
 
 def test_answer_and_sources_are_rendered(monkeypatch):
