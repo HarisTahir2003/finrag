@@ -183,3 +183,29 @@ def index_status(settings: Settings | None = None) -> tuple[bool, int, str]:
     if size == 0:
         return False, 0, "index is empty"
     return True, size, "ready"
+
+
+def corpus_coverage(settings: Settings | None = None) -> dict[str, list[int]]:
+    """Which fiscal years are indexed for which ticker.
+
+    "Ask about any company and fiscal year in the index" is not usable advice
+    unless something says what is in it. Reads every chunk's metadata, so it is
+    a few seconds on a full corpus -- cache it rather than calling it per
+    render.
+    """
+    settings = settings or get_settings()
+    try:
+        metadatas = open_store(settings).get(include=["metadatas"])["metadatas"]
+    except Exception:  # noqa: BLE001 - an unreadable index has no coverage, not an error
+        return {}
+
+    coverage: dict[str, set[int]] = {}
+    for meta in metadatas or []:
+        ticker = str(meta.get("ticker", "")).upper()
+        if not ticker:
+            continue
+        try:
+            coverage.setdefault(ticker, set()).add(int(meta.get("year", 0)))
+        except (TypeError, ValueError):
+            continue
+    return {ticker: sorted(years) for ticker, years in sorted(coverage.items())}

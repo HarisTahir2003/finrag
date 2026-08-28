@@ -15,6 +15,7 @@ and shown under the answer.
 from __future__ import annotations
 
 import os
+import time
 
 import streamlit as st
 from dotenv import find_dotenv, load_dotenv
@@ -42,6 +43,15 @@ os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
 st.set_page_config(page_title="finrag — SEC filing analyst", page_icon="📈", layout="wide")
 
 settings = get_settings()
+
+
+@st.cache_data(show_spinner=False)
+def coverage() -> dict[str, list[int]]:
+    """Cached: reading every chunk's metadata takes seconds on a full corpus."""
+    from finrag.ingest.index import corpus_coverage
+
+    return corpus_coverage(settings)
+
 
 # ----------------------------------------------------------------- sidebar
 
@@ -94,6 +104,18 @@ with st.sidebar:
     if not index_ready:
         st.caption(f"{len(list_filings(settings=settings))} filings downloaded. Build one with:")
         st.code("finrag download\nfinrag index", language="bash")
+    else:
+        # "Ask about any company and fiscal year in the index" is not usable
+        # advice unless something says what is in it.
+        with st.expander("What is indexed"):
+            for ticker, years in coverage().items():
+                st.markdown(f"**{ticker}** &nbsp; FY{years[0]}–{years[-1]}")
+
+    if st.session_state.get("messages"):
+        st.divider()
+        if st.button("Clear conversation", use_container_width=True):
+            st.session_state.messages = []
+            st.rerun()
 
 
 @st.cache_resource(show_spinner=False)
@@ -135,15 +157,12 @@ def render_sources(steps: list[dict]) -> None:
             filing, passages = parse_passages(step["observation"])
             query = step["input"].get("query", "") if isinstance(step["input"], dict) else ""
             st.markdown(f"**{filing}** — searched for *{query}*")
-            for i, passage in enumerate(passages, start=1):
-                st.text_area(
-                    f"{filing} passage {i}",
-                    passage,
-                    height=120,
-                    disabled=True,
-                    label_visibility="collapsed",
-                    key=f"src-{id(step)}-{i}",
-                )
+            for passage in passages:
+                # Monospace, because these are statement tables rendered as
+                # pipe-delimited rows and proportional text destroys the
+                # columns. wrap_lines keeps a wide row inside the expander
+                # instead of adding a second scrollbar.
+                st.code(passage, language=None, wrap_lines=True)
 
 
 # ---------------------------------------------------------------- the chat
@@ -162,6 +181,8 @@ for message in st.session_state.messages:
         st.markdown(escape_dollars(message["content"]))
         if message.get("steps"):
             render_sources(message["steps"])
+        if message.get("elapsed"):
+            st.caption(f"{message['elapsed']:.0f}s · {settings.llm_backend} · {model_name}")
 
 
 def chat_history():
@@ -182,13 +203,34 @@ def chat_history():
     return messages
 
 
-placeholder = "Compare Apple and Amazon's current ratio in fiscal 2023"
-prompt = st.chat_input(placeholder, disabled=not index_ready)
+EXAMPLES = [
+    "What was Apple's total net sales in fiscal 2024?",
+    "Compare Apple and Amazon's net income in 2023",
+    "What is Microsoft's debt-to-equity ratio for 2023?",
+    "What cybersecurity risks does JP Morgan disclose in 2023?",
+]
+
+# An empty chat with only a placeholder does not say what the thing can do.
+# These disappear once a conversation starts rather than sitting under it.
+picked = None
+examples_slot = st.container()
+if index_ready and not st.session_state.messages:
+    with examples_slot:
+        st.caption("Try one of these, or ask your own:")
+        picked = st.pills("Examples", EXAMPLES, label_visibility="collapsed")
+
+placeholder = "Ask about a company and fiscal year…"
+prompt = st.chat_input(placeholder, disabled=not index_ready) or picked
 
 if prompt:
     if key_var is not None and not os.environ.get(key_var):
         st.warning(f"Enter a {settings.llm_backend.title()} API key in the sidebar first.")
     else:
+        # Drawn at the top of this same run, before the conversation existed.
+        # Emptying the slot withdraws them without a rerun, which would take the
+        # progress log and the elapsed time with it.
+        examples_slot.empty()
+
         history = chat_history()
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
@@ -197,6 +239,7 @@ if prompt:
         with st.chat_message("assistant"):
             steps: list[dict] = []
             answer = ""
+            started = time.perf_counter()
             # Streaming rather than invoke(): a question takes tens of seconds
             # across several tool calls, and a bare spinner for that long is
             # indistinguishable from a hang.
@@ -216,14 +259,20 @@ if prompt:
                             )
                         if "output" in chunk:
                             answer = answer_text(chunk["output"])
-                    status.update(label="Done", state="complete", expanded=False)
+                    status.update(
+                        label=f"Answered in {time.perf_counter() - started:.0f}s",
+                        state="complete",
+                        expanded=False,
+                    )
                 except Exception as exc:  # noqa: BLE001 - shown rather than a stack trace
                     answer = f"Something went wrong: {exc}"
                     status.update(label="Failed", state="error", expanded=False)
 
             answer = answer.strip() or "The agent returned nothing."
+            elapsed = time.perf_counter() - started
             st.markdown(escape_dollars(answer))
             render_sources(steps)
+            st.caption(f"{elapsed:.0f}s · {settings.llm_backend} · {model_name}")
             st.session_state.messages.append(
-                {"role": "assistant", "content": answer, "steps": steps}
+                {"role": "assistant", "content": answer, "steps": steps, "elapsed": elapsed}
             )

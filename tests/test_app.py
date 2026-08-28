@@ -130,6 +130,10 @@ def _stubbed_app(monkeypatch, agent, *, index=(True, 12376, "ready")):
     # embedding model as a hard requirement of a UI test -- fine locally, and
     # an ImportError in CI, which installs no [local] extra.
     monkeypatch.setattr(finrag.ingest.index, "open_store", lambda *a, **k: object())
+    monkeypatch.setattr(
+        finrag.ingest.index, "corpus_coverage", lambda *a, **k: {"AAPL": [2023, 2024]}
+    )
+    st.cache_data.clear()
     st.cache_resource.clear()
     return AppTest.from_file(APP, default_timeout=60)
 
@@ -140,6 +144,21 @@ def test_app_loads_without_error(monkeypatch):
 
     assert not at.exception
     assert "SEC filing analyst" in [t.value for t in at.title]
+
+
+def test_examples_are_offered_only_on_an_empty_conversation(monkeypatch):
+    """A blank chat with a placeholder does not say what the thing can do."""
+    at = _stubbed_app(monkeypatch, _StubAgent())
+    at.run()
+    assert at.pills, "an empty conversation should offer starter questions"
+
+    at.chat_input[0].set_value("anything").run()
+    # Within that run the pills were already drawn before the answer existed;
+    # the app empties their container, which the browser honours but AppTest
+    # still records. The durable invariant is the next run.
+    at.run()
+    assert not at.pills, "a conversation with history should offer none"
+    assert at.session_state["messages"], "and it should still have the conversation"
 
 
 def test_no_index_disables_the_chat_and_says_why(monkeypatch):
@@ -164,7 +183,10 @@ def test_answer_and_sources_are_rendered(monkeypatch):
     assert "152987/176392" in rendered
     assert "{'expression'" not in rendered
     assert any("passage" in e.label for e in at.expander), "provenance must be shown"
-    assert len(at.text_area) == 2
+    # Passages render as monospace blocks: they are statement tables, and
+    # proportional text destroys the columns.
+    passages = [c.value for c in at.code if "152,987" in c.value or "176,392" in c.value]
+    assert len(passages) == 2
 
 
 def test_a_failing_provider_is_reported_not_raised(monkeypatch):
