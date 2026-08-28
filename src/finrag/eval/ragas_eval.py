@@ -17,14 +17,31 @@ Here the contexts come from ``search_filing``. The number this produces is
 therefore lower and means something: it is what the whole pipeline achieves,
 retrieval included.
 
-Set ``use_gold_context=True`` to reproduce the old measurement side by side.
-That comparison is the point -- the gap between the two is the retrieval
-contribution, which was previously invisible.
+Set ``use_gold_context=True`` for the oracle comparison. That gap is the point:
+it is the retrieval contribution, which was previously invisible.
+
+"Oracle" needs defining, because the first implementation of it here was
+worthless. It passed ``case.reference_answer`` as the context -- a terse string
+like "0.988 (current assets $143,566M / current liabilities $145,308M)" -- and
+scored the generator on its ability to answer from that. Every metric it
+produced was meaningless: context_precision was 1.0 by construction, since the
+context *was* the reference the metric compares against, and faithfulness came
+out at 0.445 because a model asked to answer from sixty characters elaborates
+past what they support. It looked like an upper bound and was closer to a
+lower one.
+
+Oracle context is now what a perfect retriever would have returned: the indexed
+chunks of the real filing that provably contain the answer's figures. Cases
+whose reference carries no figures -- the narrative ones -- cannot be scored
+this way and are skipped rather than fabricated, so a gold run reports on
+fewer cases than a retrieved run. Compare like with like: the ``samples`` count
+is in both reports.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 from ..config import Settings, get_settings
@@ -120,7 +137,14 @@ def build_samples(
             continue
 
         if use_gold_context:
-            contexts = [case.reference_answer]
+            contexts = oracle_contexts(case, store)
+            if not contexts:
+                log.warning(
+                    "%s: no oracle context derivable (its reference reports no figures); "
+                    "skipping rather than scoring against a fabricated context",
+                    case.id,
+                )
+                continue
         else:
             found = search_filing(
                 case.question, case.ticker, case.fiscal_year, store=store, settings=settings
@@ -151,6 +175,28 @@ def build_samples(
         log.info("%s: answered from %d context chunks", case.id, len(contexts))
 
     return samples
+
+
+# Requires a thousands separator, which is what separates a reported figure from
+# a year or a ratio. Without it, "2023" in a reference matched fifty chunks of
+# an unrelated filing and the oracle context stopped being an oracle.
+_ORACLE_FIGURE = re.compile(r"\d{1,3}(?:,\d{3})+")
+
+
+def oracle_contexts(case, store) -> list[str]:
+    """The chunks a perfect retriever would have returned for this case.
+
+    Selected by the figures the reference answer reports, so membership is
+    verifiable rather than judged: a chunk is in the oracle set if it literally
+    contains the number the answer depends on. Returns an empty list when the
+    reference carries no figures, which is how narrative cases fall out.
+    """
+    figures = set(_ORACLE_FIGURE.findall(case.reference_answer))
+    if not figures:
+        return []
+    where = {"$and": [{"ticker": case.ticker.upper()}, {"year": int(case.fiscal_year)}]}
+    documents = store.get(where=where, include=["documents"])["documents"]
+    return [d for d in documents if any(f in d for f in figures)]
 
 
 def _aggregate_scores(result) -> dict[str, float]:
@@ -240,9 +286,11 @@ def evaluate_ragas(
     judge, judge_label = get_judge_model(settings)
     log.info("generator=%s judge=%s", settings.llm_backend, judge_label)
 
-    if store is None and not use_gold_context:
+    if store is None:
         from ..ingest.index import open_store
 
+        # Needed in gold mode too: oracle context is selected from the index,
+        # not conjured from the reference answer.
         store = open_store(settings)
 
     samples = build_samples(
