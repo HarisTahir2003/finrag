@@ -147,6 +147,18 @@ class Settings:
     chunk_overlap: int = field(default_factory=lambda: int(_env("FINRAG_CHUNK_OVERLAP", "300")))
 
     collection_name: str = field(default_factory=lambda: _env("FINRAG_COLLECTION", "sec_10k"))
+    # 20, and the reasoning is worth keeping because the obvious answer is
+    # wrong. Retrieval quality saturates at k=15 -- hit_rate 1.000 and mrr
+    # 0.8243, flat through k=30 -- so k=15 looks like free money against 9,725
+    # context tokens at k=20. Measured end to end, k=15 scored RAGAS
+    # faithfulness 0.650 against k=20's 0.975 on the same ten cases.
+    #
+    # The retrieval metrics cannot see the difference: chunks 16-20 do not
+    # change *whether* the answering passage was retrieved, which is all
+    # hit_rate and mrr measure, but they do change whether the model's claims
+    # are supported. Selecting k on the retrieval curve alone would have
+    # shipped a regression that every retrieval metric called free.
+    # See docs/k-sweep-light.png.
     retrieval_k: int = field(default_factory=lambda: int(_env("FINRAG_RETRIEVAL_K", "20")))
 
     sec_contact_email: str = field(default_factory=lambda: _env("SEC_CONTACT_EMAIL", ""))

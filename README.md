@@ -357,21 +357,51 @@ not move it, which is the more useful finding. Faithfulness rose 0.900 to 0.950 
 what the metric measures. Precision is the fraction of *returned* chunks that are relevant, and
 twenty are still returned. Better ordering cannot raise it.
 
-The lever is `k`, and reranking is what makes turning it down safe, since the useful chunks are now
-at the top. The cost is recall:
+### Choosing k
 
-| retrieval_k | hit_rate | mrr |
-|---|---|---|
-| 3 | 0.900 | 0.811 |
-| 5 | 0.933 | 0.818 |
-| 8 | 0.967 | 0.822 |
-| **20** (default) | **1.000** | **0.824** |
+`retrieval_k` was swept across thirteen values, measuring retrieval quality (30 probes,
+deterministic), answer quality (RAGAS, 10 cases) and context cost.
 
-k=8 would roughly double context_precision and cut context tokens by about 60% — which is the
-difference between usable and unusable on Groq's 8,000 tokens/minute — for one lost probe in
-thirty. k=20 is the default because the primary backend is Vertex, where a large context is cheap
-and recall is what an agent's answer depends on. On a tight free tier the other end of that curve
-is the right choice, which is why it is a setting and not a constant.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/k-sweep-dark.png">
+  <img alt="Retrieval quality, answer quality and context cost against retrieval_k" src="docs/k-sweep-light.png">
+</picture>
+
+| k | hit_rate | mrr | context tokens | RAGAS faithfulness |
+|---|---|---|---|---|
+| 3 | 0.900 | 0.811 | 1,281 | 0.722 |
+| 5 | 0.933 | 0.818 | 2,225 | 0.663 |
+| 8 | 0.967 | 0.822 | 3,744 | 0.811 |
+| 10 | 0.967 | 0.822 | 4,686 | 0.708 |
+| 15 | 1.000 | 0.824 | 7,039 | 0.650 |
+| **20** | **1.000** | **0.824** | 9,725 | **0.975** |
+| 25 | 1.000 | 0.824 | 12,186 | 0.948 |
+| 30 | 1.000 | 0.824 | 14,866 | — |
+
+**Retrieval saturates at k=15 and answer quality does not**, which is the whole result. k=15 reaches
+hit_rate 1.000 and mrr 0.824 at 28% fewer tokens than k=20 — free money by every retrieval metric,
+and it was briefly committed as the default on exactly that reasoning. End to end it scored
+faithfulness 0.650 against k=20's 0.975 on the same ten cases.
+
+The retrieval metrics cannot see the difference. Chunks 16–20 do not change *whether* the answering
+passage was retrieved, which is all hit_rate and MRR measure; they change whether the model's
+claims are supported. Optimising the metric that saturates first would have shipped a regression
+every retrieval number called free.
+
+**The answer-side numbers cannot rank k, and the chart says so rather than hiding it.** Faithfulness
+runs 0.722, 0.663, 0.811, 0.708, 0.650, 0.975, 0.948 — non-monotonic, and at ten cases per point a
+single case moves it by 0.10. There is no mechanism by which k=5 is worse than k=3 and k=8 better
+than both. The honest reading is that everything below k=20 sits inside the judge's noise, and the
+two clearly-higher points are k=20 and k=25.
+
+So **k=20**: at the retrieval plateau, top of the measured answer quality, and the cheaper of the
+two points that clear the noise. `FINRAG_RETRIEVAL_K` is a setting rather than a constant because
+on a tight free tier the trade genuinely reverses — k=8 costs 3,744 tokens against 9,725, which is
+the difference between fitting inside Groq's 8,000 tokens/minute and not.
+
+One prediction here was simply wrong and is worth recording: context_precision was expected to rise
+as k fell. It falls — 0.058 at k=3, 0.122 at k=15, 0.124 at k=20 — because RAGAS weights precision
+by rank rather than computing relevant-over-returned.
 
 **Agent** runs the full tool-calling loop over the 20-question set and scores tool-path accuracy,
 calculator compliance, and how often the agent asks for a ticker it was already given — the
