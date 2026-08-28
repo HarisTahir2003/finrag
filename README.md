@@ -326,9 +326,27 @@ correct reasoning scores as unfaithful. RAGAS faithfulness rises with context si
 mechanically — which is precisely why the original notebook's 0.7393, measured on small perfect
 contexts, is not comparable to any number here, in either direction.
 
-**context_precision of 0.113 says roughly two chunks in twenty are relevant.** That is the cost of
-the retrieval depth the hit-rate column wants, and the concrete argument for a reranker. It is
-reported rather than hidden because an unmeasured pipeline would simply not know.
+**context_precision of 0.110 says roughly two chunks in twenty are relevant** — and reranking did
+not move it, which is the more useful finding. Faithfulness rose 0.900 to 0.950 and MRR 0.720 to
+0.824, while context_precision went 0.113 to 0.110. That is not a failure of the reranker; it is
+what the metric measures. Precision is the fraction of *returned* chunks that are relevant, and
+twenty are still returned. Better ordering cannot raise it.
+
+The lever is `k`, and reranking is what makes turning it down safe, since the useful chunks are now
+at the top. The cost is recall:
+
+| retrieval_k | hit_rate | mrr |
+|---|---|---|
+| 3 | 0.900 | 0.811 |
+| 5 | 0.933 | 0.818 |
+| 8 | 0.967 | 0.822 |
+| **20** (default) | **1.000** | **0.824** |
+
+k=8 would roughly double context_precision and cut context tokens by about 60% — which is the
+difference between usable and unusable on Groq's 8,000 tokens/minute — for one lost probe in
+thirty. k=20 is the default because the primary backend is Vertex, where a large context is cheap
+and recall is what an agent's answer depends on. On a tight free tier the other end of that curve
+is the right choice, which is why it is a setting and not a constant.
 
 **Agent** runs the full tool-calling loop over the 20-question set and scores tool-path accuracy,
 calculator compliance, and how often the agent asks for a ticker it was already given — the
