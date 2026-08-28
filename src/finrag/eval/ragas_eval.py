@@ -41,12 +41,11 @@ is in both reports.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass, field
 
 from ..config import Settings, get_settings
 from ..retrieval import search_filing
-from .schema import AgentCase, load_agent_cases
+from .schema import AgentCase, load_agent_cases, reference_figures
 
 log = logging.getLogger(__name__)
 
@@ -177,12 +176,6 @@ def build_samples(
     return samples
 
 
-# Requires a thousands separator, which is what separates a reported figure from
-# a year or a ratio. Without it, "2023" in a reference matched fifty chunks of
-# an unrelated filing and the oracle context stopped being an oracle.
-_ORACLE_FIGURE = re.compile(r"\d{1,3}(?:,\d{3})+")
-
-
 def oracle_contexts(case, store) -> list[str]:
     """The chunks a perfect retriever would have returned for this case.
 
@@ -190,8 +183,13 @@ def oracle_contexts(case, store) -> list[str]:
     verifiable rather than judged: a chunk is in the oracle set if it literally
     contains the number the answer depends on. Returns an empty list when the
     reference carries no figures, which is how narrative cases fall out.
+
+    Shares ``reference_figures`` with the dataset validator deliberately. The
+    two have to agree on what counts as a figure: this selects the chunks that
+    contain one, and the validator asserts such chunks exist. If they drifted
+    apart, a case could validate and then have no oracle context.
     """
-    figures = set(_ORACLE_FIGURE.findall(case.reference_answer))
+    figures = reference_figures(case.reference_answer)
     if not figures:
         return []
     where = {"$and": [{"ticker": case.ticker.upper()}, {"year": int(case.fiscal_year)}]}

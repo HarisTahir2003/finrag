@@ -65,6 +65,16 @@ jobs:
           path: ~/.cache/huggingface
           key: hf-${{ hashFiles('pyproject.toml') }}
 
+      # Structural validation of the evaluation cases themselves. The corpus
+      # tier needs the downloaded filings and cannot run here, but the
+      # structural tier catches duplicate ids, tickers that are never
+      # downloaded, and -- the one that matters -- expected_tools naming a tool
+      # the agent does not register, which fails a case on every run for a
+      # reason no metric explains. validate_all degrades to structural on its
+      # own when there is no index, so this needs no special flag.
+      - name: Dataset validation
+        run: finrag eval datasets --gate
+
       # Indexes the committed fixtures into a throwaway store, runs the labelled
       # retrieval probes, and fails the build if hit rate, MRR or filter accuracy
       # regress. filter_accuracy below 1.0 means chunks from the wrong company or

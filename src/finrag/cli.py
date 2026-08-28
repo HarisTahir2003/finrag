@@ -82,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     p_ask.add_argument("question")
 
     p_eval = sub.add_parser("eval", help="run an evaluation suite")
-    p_eval.add_argument("suite", choices=["retrieval", "ragas", "agent"])
+    p_eval.add_argument("suite", choices=["datasets", "retrieval", "ragas", "agent"])
     p_eval.add_argument(
         "--fixtures",
         action="store_true",
@@ -272,6 +272,19 @@ def _run_eval(args, settings) -> int:
     from pathlib import Path
 
     from .eval.tracking import config_params, track_run
+
+    # Deliberately before --fixtures. This suite asks whether the cases assert
+    # things the real filings support, and the fixtures are three toy documents
+    # that contain none of the real figures -- validating against them would
+    # fail every case for the wrong reason.
+    if args.suite == "datasets":
+        from .eval.validate import validate_all
+
+        report = validate_all(settings=settings)
+        print(report.format_report())
+        with track_run("datasets", config_params(settings, uses_llm=False)) as record:
+            record(report.as_metrics())
+        return 0 if report.ok or not args.gate else 1
 
     store = None
     if args.fixtures:

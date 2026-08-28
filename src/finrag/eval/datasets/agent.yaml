@@ -43,7 +43,14 @@ cases:
     fiscal_year: 2023
     question: "Calculate the debt-to-equity ratio for Microsoft for 2023."
     expected_tools: [search_10k_reports, calculator]
-    reference_answer: "0.229 (total debt $47,193M / total equity $206,223M)"
+    reference_answer: "0.229 (total debt $47,237M / total equity $206,223M)"
+    derived_figures: ["47,237"]
+    note: >
+      Total debt is the sum of two stated balance-sheet lines -- current portion
+      of long-term debt 5,247 plus long-term debt 41,990 -- so it appears nowhere
+      verbatim. The reference previously read 47,193, which is simply wrong; the
+      ratio rounds to 0.229 either way, which is why it went unnoticed until the
+      dataset validator asked where the figure came from.
 
   - id: calc-nvda-2024-05
     category: calc
@@ -52,7 +59,11 @@ cases:
     question: "What is the inventory turnover for Nvidia in fiscal 2024?"
     expected_tools: [search_10k_reports, calculator]
     reference_answer: "3.18x (COGS $16,621M / average inventory $5,221M)"
-    note: "NVIDIA's fiscal 2024 ended in January 2024."
+    derived_figures: ["5,221"]
+    note: >
+      NVIDIA's fiscal 2024 ended in January 2024. Average inventory is
+      (5,282 + 5,159) / 2 = 5,220.5, so it is computed rather than reported and
+      appears in no chunk of the filing.
 
   - id: narrative-meta-2023-06
     category: narrative
@@ -130,17 +141,34 @@ cases:
     category: mixed
     ticker: META
     fiscal_year: 2023
-    question: "How did the Family of Apps operating margin change in 2023, and what was the role of the Year of Efficiency?"
+    question: "What was Meta's operating margin in 2023, and what cost reduction measures does management describe?"
     expected_tools: [search_10k_reports, calculator]
-    reference_answer: "Margin rose from 34% to 47%, helped by a 22% headcount reduction and real estate consolidation."
+    reference_answer: "34.7% (income from operations $46,753M / total revenue $134,902M), achieved alongside cost reductions from scaling back budgets, shrinking the real estate footprint, and layoffs and restructurings."
+    note: >
+      Replaces a question about the "Year of Efficiency" and the "Family of Apps
+      operating margin". Neither phrase appears anywhere in META's FY2023 10-K --
+      both were earnings-call framing -- so the case asserted a premise the
+      corpus contradicts and could not be answered from the filing at any
+      retrieval depth. The replacement is grounded: both figures are stated in
+      the income statement, the margin itself is not reported anywhere (the only
+      "operating margin" in the document is risk-factor boilerplate), and the
+      cost reductions are described in management's own words. So it still needs
+      retrieval and arithmetic, which is what a mixed case is for.
 
   - id: mixed-msft-2023-16
     category: mixed
     ticker: MSFT
     fiscal_year: 2023
     question: "What is the cloud revenue growth rate for 2023, and how does management explain Azure demand?"
-    expected_tools: [search_10k_reports, calculator]
+    expected_tools: [search_10k_reports]
     reference_answer: "22% growth to about $111B, attributed to a structural shift as customers migrated workloads to AI-optimised infrastructure."
+    note: >
+      The calculator was expected here and should not have been. The filing
+      states the answer outright -- "Microsoft Cloud revenue increased 22% to
+      $111.6 billion" -- so retrieving it is the correct behaviour, and the
+      agent was marked failed for doing exactly the right thing. Demanding
+      arithmetic for a figure the source reports is a defect in the case, not a
+      gap in the agent.
 
   - id: mixed-nflx-2022-17
     category: mixed
