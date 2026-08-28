@@ -38,7 +38,7 @@ which is the usual failure mode when an LLM is asked to do arithmetic on a docum
 | `src/finrag/cli.py` | `finrag download / index / status / ask / eval`. |
 | `Part3.ipynb` | Narrative walkthrough of the pipeline, importing from the package. |
 | `app.py` | Streamlit chat interface. |
-| `tests/` | 92 tests over parsing, fiscal years, chunk identity, calculator safety and the gate. |
+| `tests/` | 219 tests over parsing, fiscal years, chunk identity, calculator safety, dataset validity and the gate. |
 
 The original coursework project had two further modules — extractive QnA over FinanceBench, and
 earnings-call summarization on ECTSum. Neither is part of this repository, which is the SEC filing
@@ -351,7 +351,7 @@ inheriting another's answers.
 pytest
 ```
 
-92 tests, no API key and no network required — they run against committed SEC-format fixtures.
+219 tests, no API key and no network required — they run against committed SEC-format fixtures.
 
 ## Known limitations
 
