@@ -66,3 +66,46 @@ def test_gate_output_names_the_breach():
     text = check(report_from([(False, None, 5, 0)] * 10)).format()
     assert "QUALITY GATE FAILED" in text
     assert "hit_rate" in text
+
+
+def test_llm_free_runs_are_not_labelled_with_a_chat_backend():
+    """The retrieval suite runs no LLM, so its record must not name one.
+
+    search_filing is called with apply_context_budget=False specifically so the
+    retrieval metrics cannot move when the chat provider changes. Recording
+    llm_backend against that run asserted the dependency the code avoids, and
+    named the file `retrieval-groq-openai-gpt-oss-120b-...` -- which reads as a
+    retrieval score measured on Groq.
+    """
+    from finrag.config import get_settings
+    from finrag.eval.tracking import config_params
+
+    settings = get_settings()
+    with_llm = config_params(settings, uses_llm=True)
+    without = config_params(settings, uses_llm=False)
+
+    assert "llm_backend" in with_llm
+    for key in ("llm_backend", "chat_model", "resolved_model", "llm_fallbacks"):
+        assert key not in without, f"{key} describes the chat model, not the retriever"
+
+    # The retriever's own settings must survive.
+    assert "retrieval_k" in without
+    assert "embedding_backend" in without
+    assert "chunk_strategy" in without
+
+
+def test_llm_free_result_filenames_carry_no_backend_slug(tmp_path):
+    from finrag.config import get_settings
+    from finrag.eval.tracking import config_params, track_run
+
+    with track_run(
+        "retrieval", config_params(get_settings(), uses_llm=False), results_dir=tmp_path
+    ) as record:
+        record({"hit_rate": 1.0})
+
+    written = list(tmp_path.glob("*.json"))
+    assert len(written) == 1
+    name = written[0].name
+    assert name.startswith("retrieval-"), name
+    for token in ("groq", "vertex", "gpt-oss", "gemini"):
+        assert token not in name, f"{token!r} should not appear in an LLM-free result name"

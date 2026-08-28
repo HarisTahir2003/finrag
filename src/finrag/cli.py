@@ -311,7 +311,7 @@ def _run_eval(args, settings) -> int:
         report = evaluate_retrieval(store=store, settings=settings)
         print(report.format_table())
         metrics = report.as_metrics()
-        with track_run("retrieval", config_params(settings)) as record:
+        with track_run("retrieval", config_params(settings, uses_llm=False)) as record:
             record(metrics)
         print("\n" + "\n".join(f"  {k:22} {v}" for k, v in metrics.items()))
 

@@ -33,8 +33,24 @@ def _mlflow():
         return None
 
 
-def config_params(settings: Any) -> dict[str, Any]:
-    """The settings worth recording alongside a metric."""
+# Settings that describe the chat model rather than the retriever. The
+# retrieval suite runs no LLM at all -- search_filing is called with
+# apply_context_budget=False precisely so its numbers cannot move when the chat
+# provider changes -- so recording these against a retrieval run asserts a
+# dependency the code goes out of its way not to have. It also produced files
+# named `retrieval-groq-openai-gpt-oss-120b-...`, which reads as a retrieval
+# score measured on Groq.
+_LLM_PARAMS = frozenset(
+    {"llm_backend", "chat_model", "resolved_model", "llm_fallbacks", "requests_per_minute"}
+)
+
+
+def config_params(settings: Any, uses_llm: bool = True) -> dict[str, Any]:
+    """The settings worth recording alongside a metric.
+
+    ``uses_llm=False`` omits everything about the chat model, for suites that
+    never call one.
+    """
     raw = asdict(settings) if is_dataclass(settings) else dict(settings)
     keep = (
         "llm_backend",
@@ -51,13 +67,15 @@ def config_params(settings: Any) -> dict[str, Any]:
         "requests_per_minute",
         "llm_fallbacks",
     )
+    if not uses_llm:
+        keep = tuple(k for k in keep if k not in _LLM_PARAMS)
     params = {k: str(raw[k]) for k in keep if k in raw}
 
     # chat_model is usually "" -- it means "use whatever this backend defaults
     # to". Recording only the blank leaves a result file that cannot say which
     # model produced it, which would make a cross-backend comparison table
     # unreadable. Resolve and record the actual model name.
-    backend = raw.get("llm_backend", "")
+    backend = raw.get("llm_backend", "") if uses_llm else ""
     if backend:
         try:
             from ..llm import default_model_for

@@ -49,10 +49,19 @@ cases:
     expect_any: ["513,983"]
 
   - id: amzn-2022-fulfillment
-    query: why did management change the fulfillment network
+    query: risks from optimizing and operating the fulfillment network
     ticker: AMZN
     fiscal_year: 2022
-    expect_any: ["regionalization"]
+    expect_any:
+      ["excess or insufficient fulfillment", "Optimizing and Operating Our Fulfillment Network"]
+    # The old expectation was "regionalization", against the query "why did
+    # management change the fulfillment network". Neither survives contact with
+    # the filing: "regionaliz" appears in no Amazon 10-K of any year -- it was
+    # shareholder-letter and earnings-call language -- and the 10-K nowhere
+    # explains a change to the network. The case could not pass at any k, and a
+    # test whose premise the corpus contradicts measures nothing. This asks for
+    # the risk factor the filing does carry, so it still probes narrative
+    # retrieval rather than a figure lookup.
 
   - id: nvda-2024-cost-of-revenue
     query: cost of revenue and inventories
