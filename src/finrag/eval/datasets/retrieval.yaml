@@ -49,11 +49,17 @@ cases:
     expect_any: ["513,983"]
 
   - id: amzn-2022-fulfillment
-    query: risks from optimizing and operating the fulfillment network
+    query: why did management change the fulfillment network
     ticker: AMZN
     fiscal_year: 2022
-    expect_any:
-      ["excess or insufficient fulfillment", "Optimizing and Operating Our Fulfillment Network"]
+    expect_any: ["regionalization"]
+    # Correct here and wrong against the real corpus, which is the whole reason
+    # these two datasets are separate files. The fixture was authored with the
+    # sentence "We continued regionalization of our fulfillment network", so the
+    # probe passes. Amazon's actual 10-K never uses the word -- it was
+    # shareholder-letter language -- so the corpus set asks for the risk factor
+    # the filing does carry. Editing this expectation to match the real filing,
+    # as was briefly done, silently broke the fixture probe instead.
     # The old expectation was "regionalization", against the query "why did
     # management change the fulfillment network". Neither survives contact with
     # the filing: "regionaliz" appears in no Amazon 10-K of any year -- it was

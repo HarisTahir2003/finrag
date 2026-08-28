@@ -13,6 +13,14 @@ from typing import Any
 
 DATASETS_DIR = Path(__file__).parent / "datasets"
 
+# Two retrieval sets, because one file cannot serve both corpora. The
+# fixture set probes three small synthetic documents so the CI gate runs on a
+# fresh clone; the corpus set probes the 50 real filings and names figures
+# that exist only there. Scoring the corpus set against the fixtures would
+# fail every Microsoft probe for want of a Microsoft filing.
+FIXTURE_RETRIEVAL_DATASET = DATASETS_DIR / "retrieval.yaml"
+CORPUS_RETRIEVAL_DATASET = DATASETS_DIR / "retrieval-corpus.yaml"
+
 
 @dataclass(frozen=True)
 class RetrievalCase:

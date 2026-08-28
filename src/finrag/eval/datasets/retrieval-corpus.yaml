@@ -1,0 +1,215 @@
+# Retrieval probes over the real downloaded filings. No LLM needed to score.
+#
+# Separate from retrieval.yaml, which probes the committed fixtures so the CI
+# gate can run on a fresh clone. The two cannot be one file: the fixtures hold
+# three small synthetic documents for AAPL, AMZN and NVDA, so a probe naming
+# Microsoft's balance sheet would fail there for a reason that has nothing to do
+# with retrieval quality.
+#
+# Authoring rule, learned by getting it wrong: every expectation is read out of
+# the filing, never chosen from what the retriever happens to return. A probe
+# whose target was picked because it already ranks well measures nothing.
+#
+# Every figure below is the queried year's, taken from the column the filing's
+# own header labels. That is not a formality -- AMZN and GOOGL print oldest
+# column first while AAPL, MSFT, TSLA, META, NVDA and NFLX print newest first,
+# so "the first number after the label" silently yields a two-year-old figure
+# for a fifth of the corpus. `finrag eval datasets` re-checks presence, though
+# note it cannot catch a right-figure-wrong-year error: the prior-year value is
+# in the filing too.
+#
+# NFLX reports in thousands; its figures are larger by three orders of magnitude
+# than the others and that is the filing's own unit, not an error.
+
+dataset: sec-10k-corpus
+description: Retrieval probes over the 50 downloaded filings.
+
+cases:
+  # --- AAPL, AMZN, NVDA: also probed by the fixture set ---
+  - id: aapl-2023-current-assets
+    query: total current assets
+    ticker: AAPL
+    fiscal_year: 2023
+    expect_any: ["143,566"]
+
+  - id: aapl-2023-rnd
+    query: research and development expense
+    ticker: AAPL
+    fiscal_year: 2023
+    expect_any: ["29,915"]
+
+  - id: aapl-2023-competition
+    query: competition risk factors
+    ticker: AAPL
+    fiscal_year: 2023
+    expect_any: ["intense competition"]
+
+  - id: amzn-2022-net-loss
+    query: net loss for the year
+    ticker: AMZN
+    fiscal_year: 2022
+    expect_any: ["(2,722)", "2,722"]
+
+  - id: amzn-2022-net-sales
+    query: total net sales
+    ticker: AMZN
+    fiscal_year: 2022
+    expect_any: ["513,983"]
+
+  - id: amzn-2022-fulfillment
+    query: risks from optimizing and operating the fulfillment network
+    ticker: AMZN
+    fiscal_year: 2022
+    expect_any:
+      ["excess or insufficient fulfillment", "Optimizing and Operating Our Fulfillment Network"]
+
+  - id: nvda-2024-cost-of-revenue
+    query: cost of revenue and inventories
+    ticker: NVDA
+    fiscal_year: 2024
+    expect_any: ["16,621", "5,282"]
+
+  - id: nvda-2024-revenue
+    query: total revenue for fiscal 2024
+    ticker: NVDA
+    fiscal_year: 2024
+    expect_any: ["60,922"]
+
+  - id: nvda-2024-supply-risk
+    query: what supply chain risks are disclosed
+    ticker: NVDA
+    fiscal_year: 2024
+    expect_any: ["manufacturing lead times", "export controls"]
+
+  # --- MSFT ---
+  - id: msft-2023-current-assets
+    query: total current assets
+    ticker: MSFT
+    fiscal_year: 2023
+    expect_any: ["184,257"]
+
+  - id: msft-2023-rnd
+    query: research and development expense
+    ticker: MSFT
+    fiscal_year: 2023
+    expect_any: ["27,195"]
+
+  - id: msft-2023-climate
+    query: climate change commitments and emissions
+    ticker: MSFT
+    fiscal_year: 2023
+    expect_any: ["climate change"]
+
+  # --- GOOGL: prints the earlier year first ---
+  - id: googl-2023-total-assets
+    query: total assets
+    ticker: GOOGL
+    fiscal_year: 2023
+    expect_any: ["402,392"]
+
+  - id: googl-2023-rnd
+    query: research and development expense
+    ticker: GOOGL
+    fiscal_year: 2023
+    expect_any: ["45,427"]
+
+  - id: googl-2023-antitrust
+    query: antitrust litigation and regulatory proceedings
+    ticker: GOOGL
+    fiscal_year: 2023
+    expect_any: ["antitrust"]
+
+  # --- TSLA ---
+  - id: tsla-2023-current-assets
+    query: total current assets
+    ticker: TSLA
+    fiscal_year: 2023
+    expect_any: ["49,616"]
+
+  - id: tsla-2023-rnd
+    query: research and development expense
+    ticker: TSLA
+    fiscal_year: 2023
+    expect_any: ["3,969"]
+
+  - id: tsla-2023-cybertruck
+    query: Cybertruck production ramp
+    ticker: TSLA
+    fiscal_year: 2023
+    expect_any: ["Cybertruck"]
+
+  # --- META ---
+  - id: meta-2023-current-assets
+    query: total current assets
+    ticker: META
+    fiscal_year: 2023
+    expect_any: ["85,365"]
+
+  - id: meta-2023-total-assets
+    query: total assets
+    ticker: META
+    fiscal_year: 2023
+    expect_any: ["229,623"]
+
+  - id: meta-2023-metaverse
+    query: metaverse investment and Reality Labs
+    ticker: META
+    fiscal_year: 2023
+    expect_any: ["metaverse"]
+
+  # --- NFLX: reports in thousands ---
+  - id: nflx-2023-current-assets
+    query: total current assets
+    ticker: NFLX
+    fiscal_year: 2023
+    expect_any: ["9,918,133"]
+
+  - id: nflx-2023-total-assets
+    query: total assets
+    ticker: NFLX
+    fiscal_year: 2023
+    expect_any: ["48,731,992"]
+
+  - id: nflx-2023-advertising
+    query: advertising supported plan
+    ticker: NFLX
+    fiscal_year: 2023
+    expect_any: ["advertising"]
+
+  # --- JPM: a bank, so different vocabulary entirely ---
+  - id: jpm-2023-net-revenue
+    query: total net revenue
+    ticker: JPM
+    fiscal_year: 2023
+    expect_any: ["158,104"]
+
+  - id: jpm-2023-net-income
+    query: net income for the year
+    ticker: JPM
+    fiscal_year: 2023
+    expect_any: ["49,552"]
+
+  - id: jpm-2023-credit-losses
+    query: provision for credit losses
+    ticker: JPM
+    fiscal_year: 2023
+    expect_any: ["9,320"]
+
+  # --- V ---
+  - id: v-2023-net-revenues
+    query: net revenues
+    ticker: V
+    fiscal_year: 2023
+    expect_any: ["32,653"]
+
+  - id: v-2023-net-income
+    query: net income for the year
+    ticker: V
+    fiscal_year: 2023
+    expect_any: ["17,273"]
+
+  - id: v-2023-opex
+    query: total operating expenses
+    ticker: V
+    fiscal_year: 2023
+    expect_any: ["11,653"]

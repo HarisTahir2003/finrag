@@ -320,8 +320,17 @@ def _run_eval(args, settings) -> int:
     if args.suite == "retrieval":
         from .eval.gate import check
         from .eval.retrieval_eval import evaluate_retrieval
+        from .eval.schema import (
+            CORPUS_RETRIEVAL_DATASET,
+            FIXTURE_RETRIEVAL_DATASET,
+            load_retrieval_cases,
+        )
 
-        report = evaluate_retrieval(store=store, settings=settings)
+        # The probe set has to match the corpus being probed.
+        dataset = FIXTURE_RETRIEVAL_DATASET if args.fixtures else CORPUS_RETRIEVAL_DATASET
+        report = evaluate_retrieval(
+            cases=load_retrieval_cases(dataset), store=store, settings=settings
+        )
         print(report.format_table())
         metrics = report.as_metrics()
         with track_run("retrieval", config_params(settings, uses_llm=False)) as record:

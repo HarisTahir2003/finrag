@@ -141,19 +141,23 @@ cases:
     category: mixed
     ticker: META
     fiscal_year: 2023
-    question: "What was Meta's operating margin in 2023, and what cost reduction measures does management describe?"
-    expected_tools: [search_10k_reports, calculator]
-    reference_answer: "34.7% (income from operations $46,753M / total revenue $134,902M), achieved alongside cost reductions from scaling back budgets, shrinking the real estate footprint, and layoffs and restructurings."
+    question: "How did Meta's Family of Apps operating margin change in 2023, and what cost reductions does management describe?"
+    expected_tools: [search_10k_reports]
+    reference_answer: "Family of Apps operating margin rose from 37% to 47%, alongside cost reductions from scaling back budgets, shrinking the real estate footprint, and layoffs and restructurings."
     note: >
-      Replaces a question about the "Year of Efficiency" and the "Family of Apps
-      operating margin". Neither phrase appears anywhere in META's FY2023 10-K --
-      both were earnings-call framing -- so the case asserted a premise the
-      corpus contradicts and could not be answered from the filing at any
-      retrieval depth. The replacement is grounded: both figures are stated in
-      the income statement, the margin itself is not reported anywhere (the only
-      "operating margin" in the document is risk-factor boilerplate), and the
-      cost reductions are described in management's own words. So it still needs
-      retrieval and arithmetic, which is what a mixed case is for.
+      Two earlier versions of this case were wrong in opposite directions. The
+      original asked about the "Year of Efficiency", which is earnings-call
+      language and appears nowhere in the 10-K, and gave the margin as rising
+      from 34%; the segment table says 37%. The replacement then over-corrected,
+      asking for the consolidated operating margin as a calculation -- but the
+      filing prints that too ("Operating margin ... 35 % 25 %"), and it cited
+      $46,753M, which is Meta's 2021 income from operations, not 2023's
+      $46,751M. The agent answered "35%" and was scored as failing for reading a
+      figure the document states.
+      This version asks only what the segment table supports. Both margins are
+      printed, so no arithmetic is required and the calculator is not expected.
+      A caution for the validator: presence is not enough, because 46,753 *is*
+      in the filing -- in the prior-year column.
 
   - id: mixed-msft-2023-16
     category: mixed

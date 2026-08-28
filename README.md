@@ -236,14 +236,28 @@ clone with nothing downloaded. Those fixtures are three small documents, and the
 retriever — worth stating plainly, because a table of 1.000s invites the reader to assume it
 describes real performance:
 
-| metric | fixtures (CI gate) | 50 real filings |
+There are two probe sets, because one file cannot serve both corpora. `retrieval.yaml` probes the
+fixtures; `retrieval-corpus.yaml` probes the 50 real filings with 30 probes, three per company
+across all ten. A single shared file had one probe expecting Amazon's word "regionalization" —
+which the fixture contains and no real 10-K does — so it was necessarily wrong for one corpus or
+the other.
+
+| metric | fixtures (CI gate, 9 probes) | 50 real filings (30 probes) |
 |---|---|---|
-| hit_rate | 1.000 | **0.889** |
-| mrr | 0.944 | **0.553** |
+| hit_rate | 1.000 | **0.967** |
+| mrr | 0.889 | **0.695** |
 | filter_accuracy | 1.000 | 1.000 |
 
 The real-corpus column is the honest one. Its single miss is a narrative probe whose target chunk
 ranks 26th, past the retrieval depth — a genuine weakness, left failing rather than tuned away.
+The MRR gap says the rest: the right chunk is usually found, but often second to seventh rather
+than first.
+
+Every expectation is read out of the filing, never chosen from what the retriever returns — a probe
+whose target was picked because it already ranks well measures nothing. Each figure is the queried
+year's, taken from the column the filing's own header labels, which matters more than it sounds:
+AMZN and GOOGL print the earlier year first while the rest print the later one, so "the first
+number after the label" yields a two-year-old figure for a fifth of the corpus.
 
 `filter_accuracy` holding at 1.000 on both is the metadata fix doing its job: no query ever
 retrieves a chunk from the wrong company or the wrong fiscal year.
@@ -283,8 +297,8 @@ than a reasoning one.
 
 | metric | value |
 |---|---|
-| tool_path_accuracy | 0.95 |
-| calculator_compliance | 0.95 |
+| tool_path_accuracy | 1.00 |
+| calculator_compliance | 1.00 |
 | answered_with_figures | 0.95 |
 | clarification_requests | **0.00** |
 | errors | 0 |
@@ -294,17 +308,13 @@ was a 60% "functional tool call accuracy", and its largest component was the age
 company are you interested in?" about a ticker the question had already named. Across twenty cases
 it now never happens.
 
-The single remaining failure is worth reading, because it is the metric working rather than the
-agent misbehaving in some unmeasurable way. Asked for Meta's 2023 operating margin — a figure the
-filing never prints, so it has to be computed from two that it does — the agent retrieved the
-inputs, skipped the calculator, and answered "35%". The correct value is 34.7%. That is exactly the
-behaviour `calculator_compliance` exists to catch, and exactly why the system prompt says not to
-compute in your head.
+Those two 1.00s were 0.90 before the datasets were validated, and the entire difference was
+defects in the cases rather than changes to the agent. One demanded arithmetic for a figure the
+filing states outright, so the agent was scored as failing for reading it. The other asked about
+Meta's "Year of Efficiency", which is earnings-call language absent from the 10-K.
 
-That failure only became visible after the dataset was corrected. Before that it was one of two,
-and the other was a case demanding arithmetic for a figure the filing states outright — a defect
-that scored correct behaviour as a failure and hid this one in the noise. See
-`finrag eval datasets` below.
+A 1.00 on twenty cases is a small sample and should be read as "no known failures" rather than
+"solved" — which is the argument for a wider case set, not for a louder claim.
 
 Every run is logged to `results/` as JSON, and to MLflow when it is installed, alongside the
 configuration that produced it — including the backend and the *resolved* model name, since

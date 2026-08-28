@@ -25,8 +25,12 @@ class FakeStore:
 
 
 def _run(store, retrieval=(), agent=(), monkeypatch=None):
-    monkeypatch.setattr("finrag.eval.validate.load_retrieval_cases", lambda: list(retrieval))
-    monkeypatch.setattr("finrag.eval.validate.load_agent_cases", lambda: list(agent))
+    # Both loaders take an optional path now that the fixture and corpus probe
+    # sets are separate files, so the stubs have to accept one.
+    monkeypatch.setattr(
+        "finrag.eval.validate.load_retrieval_cases", lambda path=None: list(retrieval)
+    )
+    monkeypatch.setattr("finrag.eval.validate.load_agent_cases", lambda path=None: list(agent))
     return validate_against_corpus(store=store)
 
 
@@ -44,6 +48,7 @@ def test_flags_a_probe_whose_target_is_not_in_the_filing(monkeypatch):
 
     assert not report.ok
     assert "none of expect_any" in report.failures[0].message
+    assert report.failures[0].dataset == "retrieval-corpus"
 
 
 def test_accepts_a_probe_where_only_one_alternative_matches(monkeypatch):

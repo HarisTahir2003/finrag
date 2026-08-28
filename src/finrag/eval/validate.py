@@ -3,18 +3,28 @@
 Every defect found in these datasets so far shared one shape: an expectation the
 filings contradict, which produced a plausible wrong number instead of an error.
 
-- ``amzn-2022-fulfillment`` expected the word "regionalization". It appears in no
-  Amazon 10-K of any year -- it was shareholder-letter language -- so the case
-  could not pass at any retrieval depth, and quietly held hit_rate at 8/9.
-- ``mixed-meta-2023-15`` asks about the "Year of Efficiency" and the "Family of
-  Apps operating margin". Neither phrase is in META's FY2023 filing.
-- ``mixed-msft-2023-16`` demands the calculator for a figure the filing states
+- ``amzn-2022-fulfillment`` expected the word "regionalization", which the
+  fixture contains and no real Amazon 10-K does -- it was shareholder-letter
+  language. One probe was being scored against two different corpora, so it
+  could not be right for both; the datasets are separate files now.
+- ``calc-msft-2023-04`` quoted total debt of $47,193M where the balance sheet
+  supports $47,237M. The ratio rounds to 0.229 either way, which is how a wrong
+  figure went unnoticed.
+- ``mixed-msft-2023-16`` demanded the calculator for a figure the filing states
   outright: "Microsoft Cloud revenue increased 22% to $111.6 billion". The agent
   read it instead of recomputing, which is correct, and was marked failed.
+- ``mixed-meta-2023-15`` asked about the "Year of Efficiency", which is
+  earnings-call language absent from the 10-K, and gave a margin the segment
+  table contradicts.
 
-Three defects in twenty-nine hand-authored cases. None raised an error; each one
-depressed a headline metric. They are all mechanically detectable, so they are
-detected here rather than by whoever next reads the numbers carefully.
+None raised an error; each one moved a headline metric. They are mechanically
+detectable, so they are detected here rather than by whoever next happens to
+read the numbers carefully.
+
+What this cannot catch is worth knowing. Presence is not correctness: a
+prior-year figure is in the filing too, so a reference citing 2021's income
+against a 2023 question validates cleanly. That mistake has already been made
+here once.
 
 Two tiers, because they need different things:
 
@@ -33,7 +43,13 @@ import re
 from dataclasses import dataclass, field
 
 from ..config import DEFAULT_TICKERS, Settings, get_settings
-from .schema import load_agent_cases, load_retrieval_cases, reference_figures
+from .schema import (
+    CORPUS_RETRIEVAL_DATASET,
+    FIXTURE_RETRIEVAL_DATASET,
+    load_agent_cases,
+    load_retrieval_cases,
+    reference_figures,
+)
 
 log = logging.getLogger(__name__)
 
@@ -134,16 +150,23 @@ def validate_structure(settings: Settings | None = None) -> ValidationReport:
     tickers = {t.upper() for t in DEFAULT_TICKERS}
     seen: dict[str, str] = {}
 
+    # Both retrieval sets: the fixture probes and the corpus probes are
+    # separate files with separate figures, and a duplicate id or an unknown
+    # ticker is just as broken in either.
     for dataset, cases in (
-        ("retrieval", load_retrieval_cases()),
+        ("retrieval-fixtures", load_retrieval_cases(FIXTURE_RETRIEVAL_DATASET)),
+        ("retrieval-corpus", load_retrieval_cases(CORPUS_RETRIEVAL_DATASET)),
         ("agent", load_agent_cases()),
     ):
         for case in cases:
             report.checked += 1
 
-            if case.id in seen:
-                report.add(case.id, dataset, f"duplicate id, already used in {seen[case.id]}")
-            seen[case.id] = dataset
+            # The corpus set deliberately repeats the fixture set's nine ids:
+            # they are the same probe asked of a real filing instead of a
+            # synthetic one. Only a collision *within* a file is a defect.
+            if case.id in seen and seen[case.id] == dataset:
+                report.add(case.id, dataset, f"duplicate id within {dataset}")
+            seen.setdefault(case.id, dataset)
 
             if case.ticker.upper() not in tickers:
                 report.add(
@@ -154,7 +177,7 @@ def validate_structure(settings: Settings | None = None) -> ValidationReport:
             if int(case.fiscal_year) not in _PLAUSIBLE_YEARS:
                 report.add(case.id, dataset, f"implausible fiscal_year {case.fiscal_year}")
 
-            if dataset == "retrieval":
+            if dataset.startswith("retrieval"):
                 if not case.query.strip():
                     report.add(case.id, dataset, "empty query")
                 if not case.expect_any or not any(e.strip() for e in case.expect_any):
@@ -199,8 +222,11 @@ def validate_against_corpus(store=None, settings: Settings | None = None) -> Val
             cache[key] = store.get(where=where, include=["documents"])["documents"]
         return cache[key]
 
+    # The fixture probes name figures that exist only in the synthetic
+    # documents, so checking them against the real index would report every one
+    # as absent. Only the corpus set is checkable here.
     for dataset, cases in (
-        ("retrieval", load_retrieval_cases()),
+        ("retrieval-corpus", load_retrieval_cases(CORPUS_RETRIEVAL_DATASET)),
         ("agent", load_agent_cases()),
     ):
         for case in cases:
@@ -216,7 +242,7 @@ def validate_against_corpus(store=None, settings: Settings | None = None) -> Val
                 )
                 continue
 
-            if dataset == "retrieval":
+            if dataset.startswith("retrieval"):
                 # expect_any is a disjunction -- evaluate_case returns a hit on
                 # the first needle that matches -- so the case is broken only
                 # when *none* of them exist. Requiring all of them was this
