@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
+import warnings
 
 from .config import Settings, get_settings
 
@@ -66,6 +67,19 @@ def enable_llm_cache(settings: Settings | None = None) -> bool:
         return True
 
     settings.data_root.mkdir(parents=True, exist_ok=True)
+
+    # One warning per cache *read*, which on a fully-cached RAGAS run is
+    # thousands of lines and buries the scores the run exists to produce.
+    # It cannot be fixed properly from here: the warning asks callers to pass
+    # `allowed_objects` to `loads()`, and SQLiteCache takes only a
+    # database_path -- it calls `loads()` itself with no way through. Matched on
+    # the message rather than the category so it stays narrow; every other
+    # deprecation still surfaces.
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*allowed_objects.*",
+    )
+
     set_llm_cache(SQLiteCache(database_path=str(path)))
     _installed = str(path)
     log.info("LLM cache on: %s", path)
