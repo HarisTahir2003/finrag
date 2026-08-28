@@ -76,6 +76,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     sub.add_parser("index", help="parse and index downloaded filings (idempotent)")
+
+    p_serve = sub.add_parser("serve", help="run the HTTP API")
+    p_serve.add_argument("--host", default="127.0.0.1", help="(default: %(default)s)")
+    p_serve.add_argument("--port", type=int, default=8000, help="(default: %(default)s)")
+    p_serve.add_argument(
+        "--reload", action="store_true", help="restart on code changes (development only)"
+    )
     sub.add_parser("status", help="show configuration and index size")
 
     p_ask = sub.add_parser("ask", help="ask the agent a question")
@@ -164,6 +171,22 @@ def main(argv: list[str] | None = None) -> int:
             print(f"chunks indexed     {collection_size(settings)}")
         except Exception as exc:  # noqa: BLE001 - status must never fail hard
             print(f"chunks indexed     unavailable ({exc})")
+        return 0
+
+    if args.command == "serve":
+        try:
+            import uvicorn
+        except ImportError:
+            print(
+                "The HTTP API needs uvicorn: pip install -e '.[api]'",
+                file=sys.stderr,
+            )
+            return 1
+
+        # Passing the import string rather than the app object: --reload needs
+        # to re-import the module in a fresh process, and an already-constructed
+        # object cannot be reloaded.
+        uvicorn.run("finrag.api:app", host=args.host, port=args.port, reload=args.reload)
         return 0
 
     if args.command == "eval":

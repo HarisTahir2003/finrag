@@ -27,7 +27,10 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          # api and app so the HTTP and Streamlit tests actually run rather
+          # than importorskip past themselves -- both surfaces were previously
+          # uncovered by CI entirely.
+          pip install -e ".[dev,api,app]"
 
       - name: Lint
         run: ruff check src tests app.py

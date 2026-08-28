@@ -58,6 +58,10 @@ openai-compatible = ["langchain-openai>=0.2", "langchain-classic>=1.0.0"]
 # into the base package, so asking for it now only earns a pip warning.
 semantic = ["unstructured>=0.18.0"]
 app = ["streamlit>=1.40.0"]
+# The HTTP service. Declared rather than inherited: fastapi and uvicorn
+# currently arrive via mlflow and chromadb, so an install without [eval]
+# would lose the API without losing the module that imports it.
+api = ["fastapi>=0.110", "uvicorn[standard]>=0.27"]
 # Scoring with an LLM judge, plus experiment tracking.
 #
 # Both floors here are load-bearing. Below 0.4, ragas imports

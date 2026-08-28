@@ -60,3 +60,33 @@ def describe_action(tool: str, tool_input) -> str:
     if tool == "calculator":
         return f"Calculating `{calculator_expression(tool_input)}`"
     return f"Running `{tool}`"
+
+
+def summarise_steps(steps: list[dict]) -> dict:
+    """Group an agent's tool calls into what a reader wants to check.
+
+    ``steps`` is a list of {"tool", "input", "observation"}. The UI and the HTTP
+    API both need this shape, and a copy in each would drift the moment one of
+    them learned about a new tool.
+    """
+    sources, calculations = [], []
+    for step in steps:
+        tool = step.get("tool")
+        if tool == "search_10k_reports":
+            filing, passages = parse_passages(str(step.get("observation", "")))
+            tool_input = step.get("input") or {}
+            sources.append(
+                {
+                    "filing": filing,
+                    "query": tool_input.get("query", "") if isinstance(tool_input, dict) else "",
+                    "passages": passages,
+                }
+            )
+        elif tool == "calculator":
+            calculations.append(
+                {
+                    "expression": calculator_expression(step.get("input")),
+                    "result": str(step.get("observation", "")),
+                }
+            )
+    return {"sources": sources, "calculations": calculations}
