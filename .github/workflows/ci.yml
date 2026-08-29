@@ -33,10 +33,10 @@ jobs:
           pip install -e ".[dev,api,app]"
 
       - name: Lint
-        run: ruff check src tests app.py
+        run: ruff check src tests app.py deploy
 
       - name: Format check
-        run: ruff format --check src tests app.py
+        run: ruff format --check src tests app.py deploy
 
       - name: Test
         env:
@@ -150,3 +150,111 @@ jobs:
           name: llm-smoke-results
           path: results/
           if-no-files-found: ignore
+
+  deploy-install:
+    name: hosted install path
+    runs-on: ubuntu-latest
+
+    # The deployment does not use pyproject.toml. Streamlit Community Cloud
+    # installs requirements.txt on a Linux box with Python 3.12 and runs
+    # app.py, and nothing here checked that path -- so the file that decides
+    # whether the public demo builds was the one file CI never exercised.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ hashFiles('pyproject.toml') }}
+
+      - name: Install exactly what the host installs
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # The single most expensive way this can go wrong, and it is silent:
+      # a plain `torch` requirement resolves to the CUDA build on Linux, which
+      # is 527MB plus fifteen nvidia-* packages. It still *works*; it just does
+      # not fit on a host with a 690MB memory ceiling, and you find out at
+      # deploy time.
+      - name: No CUDA packages
+        run: |
+          cuda=$(pip list --format=freeze | grep -Ei '^(nvidia-|triton=)' || true)
+          if [ -n "$cuda" ]; then
+            echo "requirements.txt pulled CUDA packages onto a CPU-only deployment:"
+            echo "$cuda"
+            exit 1
+          fi
+          python -c "import torch; assert '+cpu' in torch.__version__, torch.__version__; print(torch.__version__)"
+
+      # Importing the app is the real check: it exercises the sys.path shim
+      # that makes `finrag` importable without the package being installed,
+      # which is the part that only matters on a host and therefore the part
+      # most likely to rot.
+      - name: The app imports and the index unpacks
+        env:
+          FINRAG_LLM_BACKEND: groq
+          GROQ_API_KEY: not-a-real-key
+        run: |
+          python - <<'PY'
+          import pathlib, sys
+          sys.path.insert(0, "src")
+          from finrag.bootstrap import ensure_index
+          from finrag.config import get_settings
+          from finrag.ingest.index import index_status
+
+          settings = get_settings()
+          unpacked = ensure_index(settings)
+          ready, size, reason = index_status(settings)
+          print(f"unpacked={unpacked} ready={ready} chunks={size} ({reason})")
+          assert ready and size > 0, f"the shipped archive did not produce an index: {reason}"
+          PY
+
+      - name: Streamlit can load the entrypoint
+        run: |
+          python -c "
+          from streamlit.testing.v1 import AppTest
+          at = AppTest.from_file('app.py', default_timeout=180)
+          at.run()
+          assert not at.exception, at.exception
+          print('app booted')
+          "
+
+  images:
+    name: container images build
+    runs-on: ubuntu-latest
+    # Only on main and on demand: each image installs torch and bakes two
+    # models, which is minutes of runner time that a docs typo does not need.
+    if: github.event_name != 'pull_request'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dockerfile: Dockerfile
+            name: local stack
+          - dockerfile: Dockerfile.space
+            name: single-container demo
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built but not pushed. The point is that the Dockerfiles still describe
+      # something buildable -- both have broken before in ways nothing else
+      # would have caught, and neither is exercised by the test suite.
+      - name: Build ${{ matrix.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.dockerfile }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.dockerfile }}

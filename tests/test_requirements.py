@@ -92,12 +92,21 @@ def test_torch_comes_from_the_cpu_index_on_every_architecture():
         "--extra-index-url" in ln and "download.pytorch.org/whl/cpu" in ln for ln in lines
     ), "no CPU index declared; a plain torch requirement pulls CUDA on Linux"
 
-    torch_lines = [ln for ln in lines if ln.split("=")[0].strip().lower() == "torch"]
+    torch_lines = [ln for ln in lines if ln.split("=")[0].split(";")[0].strip().lower() == "torch"]
     assert torch_lines, "torch must be declared explicitly, not left to a transitive resolve"
-    for line in torch_lines:
+
+    # "+cpu" is only meaningful where a CUDA build exists, which is Linux.
+    # PyTorch publishes no "+cpu" wheel for macOS at all -- requiring it there
+    # makes `pip install -r requirements.txt` fail outright on a Mac, which is
+    # how this test earned its marker-awareness.
+    linux = [ln for ln in torch_lines if 'sys_platform != "linux"' not in ln]
+    assert linux, "no torch requirement applies on Linux, which is where it is deployed"
+    for line in linux:
         assert "+cpu" in line, (
-            f"{line!r} does not request a +cpu build, so pip may take the CUDA wheel from PyPI"
+            f"{line!r} applies on Linux without requesting a +cpu build, so pip "
+            "may take the 527MB CUDA wheel from PyPI"
         )
+
     assert not any(".whl" in ln for ln in lines), (
         "a pinned wheel URL is architecture-locked; use the +cpu local version instead"
     )

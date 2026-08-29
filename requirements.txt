@@ -26,8 +26,14 @@
 # manylinux_2_28_x86_64, and resolving it on an aarch64 image failed with "not a
 # supported wheel on this platform". Verified both ways on aarch64: the URL form
 # fails, this form resolves 2.13.0+cpu with zero CUDA packages.
+# The marker is not decoration. CUDA wheels only exist for Linux, so "+cpu" is
+# the only place the distinction is meaningful -- and PyTorch publishes no
+# "+cpu" build for macOS at all, where the ordinary wheel is already CPU-only.
+# Without the split, `pip install -r requirements.txt` on a Mac fails with
+# "Could not find a version that satisfies the requirement torch==2.13.0+cpu".
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.13.0+cpu
+torch==2.13.0+cpu; sys_platform == "linux"
+torch==2.13.0; sys_platform != "linux"
 
 # --- base (pyproject [project.dependencies]) -------------------------------
 # Upper bounds because this is deployed: Streamlit Community Cloud reinstalls

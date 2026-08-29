@@ -180,15 +180,31 @@ def test_generic_key_variable_is_a_fallback(monkeypatch):
 # ------------------------------------------------- provider error triage
 
 
-def _groq_error(cls_name: str, status: int, message: str):
-    """A real provider exception, built the way the client library builds one."""
-    import groq
-    import httpx
+class _ProviderError(Exception):
+    """Stand-in for a provider exception: a message and a status code.
 
-    request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
-    return getattr(groq, cls_name)(
-        message, response=httpx.Response(status, request=request), body=None
-    )
+    Those two things are the entire surface classify_provider_error reads, so
+    the triage tests below need no provider package and run in CI, which
+    installs no [groq] extra. Building them from the real groq classes made
+    five tests fail there while passing locally -- the classic shape of a test
+    that only runs where it is not needed.
+
+    Fidelity to the real exceptions is checked separately, once, below.
+    """
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status_code = status
+
+
+def _groq_error(cls_name: str, status: int, message: str):
+    """A stand-in shaped like ``groq.<cls_name>``.
+
+    The class name is carried into the string the classifier sees, because
+    that is how it recognises an exception type without importing the package
+    that defines it.
+    """
+    return type(cls_name, (_ProviderError,), {})(status, message)
 
 
 def test_a_daily_quota_is_not_a_transient_rate_limit():
@@ -218,13 +234,16 @@ def test_a_daily_quota_is_not_a_transient_rate_limit():
 
 
 def test_a_rejected_key_and_a_missing_key_are_told_apart():
-    """Different advice: fix what you typed, versus type something at all."""
-    import groq
+    """Different advice: fix what you typed, versus type something at all.
 
+    The missing-key case is raised as a bare GroqError with no status_code at
+    all -- it happens at client construction, before any HTTP request exists --
+    so it is matched on text. A plain Exception is the honest stand-in.
+    """
     from finrag.llm import classify_provider_error
 
     rejected = _groq_error("AuthenticationError", 401, "Invalid API Key")
-    absent = groq.GroqError(
+    absent = Exception(
         "The api_key client option must be set either by passing api_key to the "
         "client or by setting the GROQ_API_KEY environment variable"
     )
@@ -326,3 +345,22 @@ def test_a_tight_context_backend_is_not_offered_multi_filing_questions():
     base = Settings()
     assert not fits_multi_filing_question(replace(base, llm_backend="groq"))
     assert fits_multi_filing_question(replace(base, llm_backend="vertex"))
+
+
+def test_the_stand_in_matches_the_real_groq_exceptions():
+    """The one test that needs the provider package, so it is the only one skipped.
+
+    Everything above exercises the classifier against a stand-in. This asserts
+    the stand-in is not a fiction: groq's real exceptions carry the
+    status_code the classifier reads, and the statuses are the ones assumed.
+    """
+    groq = pytest.importorskip("groq")
+
+    assert groq.RateLimitError.status_code == 429
+    assert groq.AuthenticationError.status_code == 401
+    assert issubclass(groq.RateLimitError, groq.APIStatusError)
+    # GroqError is the base, and the missing-key error is raised as one --
+    # with no status_code at all, which is why the classifier checks text
+    # before it checks status.
+    assert issubclass(groq.APIStatusError, groq.GroqError)
+    assert not hasattr(groq.GroqError, "status_code")
