@@ -101,3 +101,52 @@ def test_torch_comes_from_the_cpu_index_on_every_architecture():
     assert not any(".whl" in ln for ln in lines), (
         "a pinned wheel URL is architecture-locked; use the +cpu local version instead"
     )
+
+
+# Streamlit Community Cloud picks ONE dependency file, by a fixed precedence,
+# searching the entrypoint's directory then the repository root:
+#
+#     uv.lock  >  Pipfile  >  environment.yml  >  requirements.txt  >  pyproject.toml
+#
+# https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/app-dependencies
+HIGHER_PRECEDENCE = ("uv.lock", "Pipfile", "environment.yml", "environment.yaml")
+
+
+def test_nothing_outranks_the_requirements_file():
+    """Only requirements.txt may win the dependency-file election.
+
+    The deployed build already logs "WARN: More than one requirements file
+    detected" because pyproject.toml is also present. That one is harmless:
+    requirements.txt outranks it. Adding any of the files above would not be --
+    it would silently win, and the CPU-only torch pin lives in requirements.txt
+    alone, so the build would start pulling the 527MB CUDA wheel and fifteen
+    nvidia-* packages onto a host with a 690MB memory floor.
+
+    The failure would appear as a deploy that used to work and now does not,
+    with nothing in the diff obviously about torch.
+    """
+    found = [name for name in HIGHER_PRECEDENCE if (ROOT / name).exists()]
+    assert not found, (
+        f"{found} outranks requirements.txt on Streamlit Community Cloud, so the "
+        "CPU-only torch pin would be skipped. Move those dependencies into "
+        "requirements.txt or delete the file."
+    )
+
+
+def test_pyproject_is_not_poetry_shaped():
+    """The one that would matter if precedence ever changed.
+
+    Community Cloud reads pyproject.toml as a Poetry file. This project's is
+    setuptools, so being chosen would not merely install the wrong extras -- it
+    would not be understood at all. Nothing here should ever add a
+    [tool.poetry] section in the hope of making it work; requirements.txt is
+    the supported path and already wins.
+    """
+    import tomllib
+
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "poetry" not in data.get("tool", {}), (
+        "a [tool.poetry] section would make pyproject.toml a viable dependency "
+        "file for Community Cloud, creating two live paths instead of one"
+    )
+    assert data["build-system"]["build-backend"].startswith("setuptools")

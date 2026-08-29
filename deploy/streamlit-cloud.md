@@ -61,6 +61,32 @@ as an empty index rather than as a download error.
 
 5. **Deploy.** The first build takes several minutes, mostly installing torch.
 
+## The "more than one requirements file" warning
+
+The build log says:
+
+```
+WARN: More than one requirements file detected in the repository.
+Python dependencies were installed from /mount/src/finrag/requirements.txt
+```
+
+It is harmless here, and it is worth knowing why rather than ignoring it.
+Community Cloud picks exactly one dependency file, by a fixed precedence,
+searching the entrypoint's directory and then the repository root:
+
+    uv.lock  >  Pipfile  >  environment.yml  >  requirements.txt  >  pyproject.toml
+
+Both `requirements.txt` and `pyproject.toml` are present, and `requirements.txt`
+outranks it, so the right one wins every time -- by documented precedence, not
+by luck. That matters more than it looks: Community Cloud reads a
+`pyproject.toml` as a **Poetry** file, and this project's is setuptools, so
+being chosen would not install the wrong extras, it would fail outright.
+
+Adding a `Pipfile`, `environment.yml` or `uv.lock` later would silently outrank
+`requirements.txt`, and the CPU-only torch pin lives there alone -- the build
+would start pulling the CUDA wheel. `tests/test_requirements.py` fails if any
+of those files appears.
+
 ## Why `FINRAG_RERANK = "false"`
 
 Community Cloud guarantees a *minimum* of 690MB per app and allows up to 2.7GB
