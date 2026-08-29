@@ -29,6 +29,7 @@ from finrag.presentation import (
     calculator_expression,
     describe_action,
     escape_dollars,
+    failure_message,
     parse_passages,
 )
 
@@ -72,14 +73,31 @@ with st.sidebar:
         )
         st.info(f"`{settings.llm_backend}` authenticates {where} — no API key needed.")
     else:
-        api_key = st.text_input(
+        # NEVER pre-fill this from the environment. A widget's default value is
+        # sent to every browser that opens the page, so `value=os.environ[...]`
+        # publishes the host's key to every visitor before they click anything;
+        # type="password" masks the rendering and nothing else. Confirmed by
+        # reading the widget back with a sentinel key in the environment. A
+        # placeholder says a key is configured without being one.
+        configured = bool(os.environ.get(key_var))
+        typed = st.text_input(
             f"{settings.llm_backend.title()} API key",
             type="password",
-            value=os.environ.get(key_var, ""),
-            help=f"Read from {key_var}.",
+            placeholder=(
+                "Using the key configured on the server" if configured else f"Paste a {key_var}"
+            ),
+            help=(
+                f"Optional while the server provides {key_var}. A key you enter "
+                "is kept for your session only and is never written to disk."
+            ),
         )
-        if api_key:
-            os.environ[key_var] = api_key
+        # Session state rather than os.environ: one process serves every
+        # visitor, so writing a key into the environment would hand it to the
+        # next person to load the page. Theirs wins over the server's for them
+        # alone.
+        if typed:
+            st.session_state["api_key"] = typed
+        api_key = st.session_state.get("api_key") or os.environ.get(key_var, "")
 
     st.caption(f"Model: `{model_name}`")
 
@@ -125,7 +143,7 @@ def key_fingerprint(api_key: str) -> str:
 
 
 @st.cache_resource(show_spinner=False)
-def load_agent(fingerprint: str):
+def load_agent(fingerprint: str, _api_key: str | None = None):
     """Build the agent once per API key.
 
     The fingerprint is a cache parameter rather than a closure variable on
@@ -145,7 +163,12 @@ def load_agent(fingerprint: str):
     from finrag.agent import build_agent
     from finrag.ingest.index import open_store
 
-    return build_agent(store=open_store(settings), settings=settings)
+    # Underscore-prefixed *here* on purpose, and only here: Streamlit excludes
+    # it from the cache key, which is exactly right for the secret itself --
+    # `fingerprint` above already identifies it, and the raw key has no business
+    # in a cache key. The two arguments are the same fact at two sensitivities.
+    overrides = {"api_key": _api_key} if (_api_key and required_api_key(settings)) else {}
+    return build_agent(store=open_store(settings), settings=settings, **overrides)
 
 
 # ------------------------------------------------------------- provenance
@@ -239,7 +262,7 @@ placeholder = "Ask about a company and fiscal year…"
 prompt = st.chat_input(placeholder, disabled=not index_ready) or picked
 
 if prompt:
-    if key_var is not None and not os.environ.get(key_var):
+    if key_var is not None and not api_key:
         st.warning(f"Enter a {settings.llm_backend.title()} API key in the sidebar first.")
     else:
         # Drawn at the top of this same run, before the conversation existed.
@@ -261,7 +284,7 @@ if prompt:
             # indistinguishable from a hang.
             with st.status("Reading filings…", expanded=True) as status:
                 try:
-                    agent = load_agent(key_fingerprint(api_key))
+                    agent = load_agent(key_fingerprint(api_key), api_key)
                     for chunk in agent.stream({"input": prompt, "chat_history": history}):
                         for action in chunk.get("actions", []):
                             st.write(describe_action(action.tool, action.tool_input))
@@ -281,7 +304,7 @@ if prompt:
                         expanded=False,
                     )
                 except Exception as exc:  # noqa: BLE001 - shown rather than a stack trace
-                    answer = f"Something went wrong: {exc}"
+                    answer = failure_message(exc, settings.llm_backend)
                     status.update(label="Failed", state="error", expanded=False)
 
             answer = answer.strip() or "The agent returned nothing."

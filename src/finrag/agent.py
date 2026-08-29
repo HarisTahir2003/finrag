@@ -99,11 +99,18 @@ def build_tools(store=None, settings: Settings | None = None) -> list:
     ]
 
 
-def build_agent(store=None, settings: Settings | None = None, verbose: bool = False):
+def build_agent(
+    store=None, settings: Settings | None = None, verbose: bool = False, **llm_overrides
+):
     """Assemble the agent executor.
 
     Needs whichever provider extra matches settings.llm_backend, and that
     provider's API key. See finrag.llm.
+
+    ``llm_overrides`` reach the chat model's constructor untouched. The reason
+    they exist is ``api_key``: a shared deployment serves every visitor from one
+    process, so a visitor's own key has to travel with the request rather than
+    be written into os.environ, where it would become the next visitor's key.
     """
     try:
         from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
@@ -119,7 +126,7 @@ def build_agent(store=None, settings: Settings | None = None, verbose: bool = Fa
     settings = settings or get_settings()
     tools = build_tools(store=store, settings=settings)
 
-    llm = get_chat_model(settings)
+    llm = get_chat_model(settings, **llm_overrides)
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", SYSTEM_PROMPT),

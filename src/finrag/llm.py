@@ -395,3 +395,51 @@ def required_api_key(settings: Settings | None = None) -> str | None:
     if backend not in keys:
         raise ValueError(f"unknown llm backend {backend!r}")
     return keys[backend]
+
+
+# Ordered longest-window-first: a message naming the daily window is a daily
+# problem even though it also matches the generic "rate limit" phrasing.
+_DAILY_MARKERS = ("per day", "per-day", "rpd", "daily limit", "daily quota", "quota exceeded")
+_MISSING_KEY_MARKERS = (
+    "api_key client option must be set",
+    "must be set either by passing",
+    "did not find api key",
+)
+_AUTH_MARKERS = ("invalid api key", "incorrect api key", "authenticationerror", "unauthorized")
+
+
+def classify_provider_error(exc: BaseException) -> str:
+    """What kind of provider failure this is: the thing a caller can act on.
+
+    Returns one of ``missing_key``, ``auth``, ``quota``, ``rate_limit``,
+    ``other``.
+
+    The distinction that earns this function's existence is ``quota`` versus
+    ``rate_limit``. Both arrive as HTTP 429. A per-minute cap clears by itself
+    in seconds and the right advice is "ask again shortly"; a per-day quota does
+    not clear until the daily reset, and on a public demo the only way forward
+    is for the visitor to supply their own key. Telling someone to wait when the
+    quota is gone for the day is advice that never comes true.
+
+    Groq names the window in the message it returns -- "...on requests per day
+    (RPD)..." versus "...on tokens per minute (TPM)..." -- so the text is the
+    discriminator. Matching on strings rather than on exception classes keeps
+    this working for providers whose client library is not installed, and keeps
+    it testable without a network call or a real exhausted account.
+    """
+    text = f"{type(exc).__name__} {exc}".lower()
+    status = getattr(exc, "status_code", None)
+
+    if any(m in text for m in _MISSING_KEY_MARKERS):
+        return "missing_key"
+    if status in (401, 403) or any(m in text for m in _AUTH_MARKERS):
+        return "auth"
+
+    rate_limited = status == 429 or "ratelimit" in text or "rate limit" in text
+    if rate_limited:
+        return "quota" if any(m in text for m in _DAILY_MARKERS) else "rate_limit"
+
+    # A quota can also surface as a plain message with no status attached.
+    if any(m in text for m in _DAILY_MARKERS):
+        return "quota"
+    return "other"

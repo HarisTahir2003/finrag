@@ -114,3 +114,42 @@ def escape_dollars(text: str) -> str:
         part if index % 2 else part.replace("\\$", "$").replace("$", "\\$")
         for index, part in enumerate(parts)
     )
+
+
+def failure_message(exc: BaseException, backend: str) -> str:
+    """What to show a reader when a question fails.
+
+    A provider error rendered raw -- "Error code: 429 - {'error': {'message':
+    'Rate limit reached for model ...'}}" -- tells a reader nothing they can act
+    on, and on a public demo it is the most likely thing they will ever see.
+
+    Each branch says what to do next, and the two 429s say different things on
+    purpose: a per-minute limit clears by itself, a spent daily quota does not.
+    """
+    from .llm import classify_provider_error
+
+    kind = classify_provider_error(exc)
+    name = backend.title()
+
+    if kind == "quota":
+        return (
+            f"**The daily {name} quota for this demo is used up.** It resets "
+            "every 24 hours. To keep going now, put your own free "
+            f"{name} API key in the sidebar — it is held for your session only, "
+            "is never written to disk, and is not shared with anyone else using "
+            "this page."
+        )
+    if kind == "rate_limit":
+        return (
+            f"**{name} is rate-limiting this request.** This one clears on its "
+            "own — wait a few seconds and ask again. Asking about a single "
+            "company rather than comparing two also helps, since a comparison "
+            "sends several filings' worth of context at once."
+        )
+    if kind in ("auth", "missing_key"):
+        return (
+            f"**That {name} API key was rejected.** Check it in the sidebar. "
+            "Leaving the box empty falls back to the key configured on the "
+            "server, if there is one."
+        )
+    return f"Something went wrong: {exc}"

@@ -175,3 +175,89 @@ def test_generic_key_variable_is_a_fallback(monkeypatch):
     monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
     monkeypatch.setenv("FINRAG_LLM_API_KEY", "shared-key")
     assert get_chat_model(get_settings()) is not None
+
+
+# ------------------------------------------------- provider error triage
+
+
+def _groq_error(cls_name: str, status: int, message: str):
+    """A real provider exception, built the way the client library builds one."""
+    import groq
+    import httpx
+
+    request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    return getattr(groq, cls_name)(
+        message, response=httpx.Response(status, request=request), body=None
+    )
+
+
+def test_a_daily_quota_is_not_a_transient_rate_limit():
+    """The distinction the classifier exists for.
+
+    Both arrive as HTTP 429. Telling someone to wait a few seconds when the
+    daily quota is spent is advice that never comes true, and on a public demo
+    the difference decides whether the visitor is told to supply their own key.
+    """
+    from finrag.llm import classify_provider_error
+
+    daily = _groq_error(
+        "RateLimitError",
+        429,
+        "Rate limit reached for model `openai/gpt-oss-120b` in organization `org_x` "
+        "service tier `on_demand` on requests per day (RPD): Limit 1000, Used 1000",
+    )
+    minute = _groq_error(
+        "RateLimitError",
+        429,
+        "Rate limit reached for model `openai/gpt-oss-120b` in organization `org_x` "
+        "on tokens per minute (TPM): Limit 8000, Used 7995",
+    )
+
+    assert classify_provider_error(daily) == "quota"
+    assert classify_provider_error(minute) == "rate_limit"
+
+
+def test_a_rejected_key_and_a_missing_key_are_told_apart():
+    """Different advice: fix what you typed, versus type something at all."""
+    import groq
+
+    from finrag.llm import classify_provider_error
+
+    rejected = _groq_error("AuthenticationError", 401, "Invalid API Key")
+    absent = groq.GroqError(
+        "The api_key client option must be set either by passing api_key to the "
+        "client or by setting the GROQ_API_KEY environment variable"
+    )
+
+    assert classify_provider_error(rejected) == "auth"
+    assert classify_provider_error(absent) == "missing_key"
+
+
+def test_an_unrelated_failure_is_not_misreported_as_a_quota_problem():
+    """A bug in retrieval must not tell the reader to buy more quota."""
+    from finrag.llm import classify_provider_error
+
+    assert classify_provider_error(ValueError("chroma exploded")) == "other"
+    assert classify_provider_error(KeyError("id")) == "other"
+
+
+def test_the_quota_message_tells_the_visitor_what_to_do():
+    from finrag.presentation import failure_message
+
+    daily = _groq_error("RateLimitError", 429, "on requests per day (RPD): Limit 1000, Used 1000")
+    text = failure_message(daily, "groq")
+
+    assert "sidebar" in text.lower(), "must point at the control that fixes it"
+    assert "session" in text.lower(), "must say the key is not stored"
+
+    minute = _groq_error("RateLimitError", 429, "on tokens per minute (TPM): Limit 8000")
+    assert "sidebar" not in failure_message(minute, "groq").lower(), (
+        "a transient limit must not send the visitor hunting for an API key"
+    )
+
+
+def test_an_unclassified_failure_still_shows_the_error():
+    """Swallowing the detail would make a real bug undiagnosable."""
+    from finrag.presentation import failure_message
+
+    assert "chroma exploded" in failure_message(ValueError("chroma exploded"), "groq")

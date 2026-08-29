@@ -312,11 +312,24 @@ def test_load_agent_is_cached_per_key():
     args = [a.arg for a in node.args.args]
 
     assert args, "load_agent takes no argument, so every key shares one cache entry"
-    underscored = [a for a in args if a.startswith("_")]
-    assert not underscored, (
-        f"{underscored} are excluded from Streamlit's cache key, so changing the "
-        "API key would not rebuild the agent"
+
+    # The two arguments are the same fact at two sensitivities, and the
+    # underscore is right on exactly one of them. `fingerprint` identifies the
+    # key and MUST be hashed, or a changed key reuses the old agent. The raw
+    # key MUST NOT be hashed -- it would put a live secret in a cache key, and
+    # the fingerprint already distinguishes it.
+    hashed = [a for a in args if not a.startswith("_")]
+    assert hashed, (
+        "every argument is underscore-prefixed, so Streamlit's cache key is "
+        "empty and one agent is pinned for the life of the process"
     )
+    assert any("fingerprint" in a for a in hashed), (
+        f"no fingerprint among the hashed arguments {hashed}; the cache would "
+        "not notice the key changing"
+    )
+    for arg in args:
+        if arg.startswith("_"):
+            assert "key" in arg, f"{arg} is excluded from the cache key -- is that deliberate?"
 
 
 def test_load_agent_is_actually_cached():
@@ -343,3 +356,80 @@ def test_the_fingerprint_is_not_key_material():
     digest = hashlib.sha256(b"sk-secret-value").hexdigest()[:16]
     assert digest != hashlib.sha256(b"sk-other-value").hexdigest()[:16]
     assert "secret" not in digest
+
+
+# --------------------------------------------------- the key never leaves
+
+
+def test_the_sidebar_never_pre_fills_the_key_from_the_environment(monkeypatch):
+    """A widget's default value is sent to every browser that opens the page.
+
+    So `st.text_input(..., value=os.environ["GROQ_API_KEY"])` publishes the
+    host's key to every visitor before they click anything -- type="password"
+    masks the rendering and nothing else. This was live: a sentinel key placed
+    in the environment came back as the widget's value.
+
+    On a shared deployment the owner's key is exactly what sits in that
+    variable, so the blast radius is "anyone who opens the page". The box must
+    stay empty and say what it is falling back to instead.
+    """
+    import streamlit as st
+    from streamlit.testing.v1 import AppTest
+
+    import finrag.ingest.index
+
+    SENTINEL = "gsk_SENTINEL_MUST_NOT_REACH_A_BROWSER"
+    monkeypatch.setenv("FINRAG_LLM_BACKEND", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", SENTINEL)
+    monkeypatch.setattr(finrag.ingest.index, "index_status", lambda *a, **k: (True, 12376, "ready"))
+    monkeypatch.setattr(finrag.ingest.index, "open_store", lambda *a, **k: object())
+    monkeypatch.setattr(finrag.ingest.index, "corpus_coverage", lambda *a, **k: {"AAPL": [2024]})
+    st.cache_data.clear()
+    st.cache_resource.clear()
+
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.run()
+
+    assert not at.exception
+    boxes = [ti for ti in at.text_input if "api key" in ti.label.lower()]
+    assert boxes, "the key box should still be rendered for a keyed backend"
+    for box in boxes:
+        assert SENTINEL not in str(box.value), "the host's key reached the browser"
+        assert box.value == "", "the box must start empty"
+        assert SENTINEL not in str(getattr(box, "placeholder", "")), "leaked via the placeholder"
+
+
+def test_a_visitor_key_is_not_written_into_the_process_environment():
+    """One process serves every visitor.
+
+    Writing a typed key to os.environ would hand it to whoever loads the page
+    next, and would silently bill one visitor for another's questions. It has to
+    travel to the model as an argument instead, which is why build_agent grew
+    **llm_overrides.
+    """
+    import ast
+    import inspect
+
+    from finrag.agent import build_agent
+
+    source = Path(APP).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    # No assignment into os.environ anywhere in the app.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Subscript)
+                    and isinstance(target.value, ast.Attribute)
+                    and target.value.attr == "environ"
+                ):
+                    raise AssertionError(
+                        "app.py assigns into os.environ; a visitor's key would "
+                        "become every later visitor's key"
+                    )
+
+    # And the route it takes instead actually exists.
+    assert "llm_overrides" in inspect.signature(build_agent).parameters or any(
+        p.kind is p.VAR_KEYWORD for p in inspect.signature(build_agent).parameters.values()
+    ), "build_agent must accept per-call llm overrides for the key to travel"
