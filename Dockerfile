@@ -49,18 +49,22 @@ RUN apt-get update \
 
 COPY --from=builder /opt/venv /opt/venv
 
-# Bake both models into the image. Without this the first request downloads
-# ~175MB from HuggingFace, which makes a cold container slow and, worse, makes
-# answering depend on HuggingFace being reachable at that moment.
+# The user is created *before* the models are fetched, and the fetch runs as
+# that user. Doing it the other way -- warmup as root, then chown -R -- rewrites
+# every file's ownership, and a layer that touches 184MB of model weights
+# stores all 184MB again. The image carried the cache twice.
+RUN useradd --create-home --uid 10001 finrag \
+    && mkdir -p /opt/models /app \
+    && chown finrag:finrag /opt/models /app
+USER finrag
+WORKDIR /app
+
+# Bake both models. Without this the first request downloads ~175MB from
+# HuggingFace, making a cold container slow and making answers depend on
+# HuggingFace being reachable at that moment.
 RUN finrag warmup
 
-WORKDIR /app
-COPY app.py ./
-
-# An unprivileged user owning only what it must write to.
-RUN useradd --create-home --uid 10001 finrag \
-    && chown -R finrag:finrag /opt/models /app
-USER finrag
+COPY --chown=finrag:finrag app.py ./
 
 EXPOSE 8000 8501
 

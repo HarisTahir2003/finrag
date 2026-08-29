@@ -50,6 +50,17 @@ def _load() -> None:
     _state["settings"] = settings
     _state["store"] = store
 
+    # The reranker is baked into the image but still loads into *this process*
+    # the first time something reranks -- which made the first /search take 16
+    # seconds against 1.4 afterwards. Startup is the right place to pay that.
+    if settings.rerank:
+        try:
+            from .rerank import get_reranker
+
+            get_reranker(settings)
+        except Exception as exc:  # noqa: BLE001 - a slow first search beats no service
+            log.warning("could not preload the reranker (%s)", exc)
+
     try:
         from .agent import build_agent
 
