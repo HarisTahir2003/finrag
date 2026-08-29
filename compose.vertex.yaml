@@ -1,0 +1,32 @@
+# Vertex AI inside the container, for local use only.
+#
+#   docker compose -f compose.yaml -f compose.vertex.yaml up -d
+#
+# Vertex authenticates with Application Default Credentials, which on this
+# machine is an `authorized_user` credential: your Google account plus a refresh
+# token, created by `gcloud auth application-default login`. Mounting it read-only
+# lets the container borrow your identity.
+#
+# This file is for a container running on your laptop and nowhere else. The
+# credential is personal, long-lived, and grants whatever your account can do --
+# a deployed image must use a service account instead, which is scoped to one
+# project and one role and can be revoked without touching your login.
+
+services:
+  api:
+    volumes:
+      - ./data:/app/data
+      - ${HOME}/.config/gcloud:/home/finrag/.config/gcloud:ro
+    environment:
+      FINRAG_LLM_BACKEND: vertex
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+      GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION:-us-central1}
+
+  ui:
+    volumes:
+      - ./data:/app/data
+      - ${HOME}/.config/gcloud:/home/finrag/.config/gcloud:ro
+    environment:
+      FINRAG_LLM_BACKEND: vertex
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+      GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION:-us-central1}
