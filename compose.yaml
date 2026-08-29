@@ -58,4 +58,11 @@ services:
       - --server.port=8501
       - --server.headless=true
       - --browser.gatherUsageStats=false
+      # Nothing in an image changes at runtime, so watching for edits is wasted
+      # work -- and not harmless: the watcher walks every loaded module, which
+      # drags transformers' lazy imports into pulling image processors that
+      # want torchvision. The image installs CPU torch only, so that raises,
+      # Streamlit catches it, and the log fills with a traceback from a feature
+      # nothing here uses.
+      - --server.fileWatcherType=none
     restart: unless-stopped
