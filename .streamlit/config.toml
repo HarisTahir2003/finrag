@@ -1,0 +1,23 @@
+# Configuration for deployed runs. Streamlit reads .streamlit/config.toml from
+# the working directory, which is how a hosted app is configured when there is
+# no command line to pass flags on -- Streamlit Community Cloud runs
+# `streamlit run app.py` for you and offers no way to add arguments.
+#
+# The Docker images pass these same two settings as flags; this file is their
+# equivalent for the hosted deployment. Keep the two in step.
+
+[server]
+# Nothing in a deployed app's source changes at runtime, so watching for edits
+# is wasted work -- and not harmless. The watcher walks every module in
+# sys.modules looking for a source file, which touches transformers' lazy
+# __getattr__, which imports image processors that require torchvision. This
+# project installs CPU-only torch and no torchvision, so each walk raises
+# ModuleNotFoundError. Streamlit catches it and carries on, and the deployed
+# log fills with tracebacks from a feature nothing here uses.
+#
+# Installing torchvision would "fix" it by adding gigabytes of dependency for
+# image models this app never touches, to a host with a 690MB memory floor.
+fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false
