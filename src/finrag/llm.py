@@ -209,7 +209,7 @@ def get_chat_model(settings: Settings | None = None, **overrides: Any) -> Any:
     # others), and since `errors` is a ranked column in the comparison table a
     # backend would be penalised for its client library's retry policy rather
     # than its own reliability.
-    params = {"temperature": 0, "max_retries": MAX_RETRIES, **overrides}
+    params = {"temperature": 0, "max_retries": settings.max_retries, **overrides}
     limiter = _rate_limiter(backend, settings)
     if limiter is not None:
         params.setdefault("rate_limiter", limiter)
@@ -300,7 +300,7 @@ def _openai_compatible(backend: str, settings: Settings, **overrides: Any) -> An
     params: dict[str, Any] = {
         "temperature": 0,
         "max_tokens": settings.max_output_tokens,
-        "max_retries": MAX_RETRIES,
+        "max_retries": settings.max_retries,
         **overrides,
     }
     limiter = _rate_limiter(backend, settings)

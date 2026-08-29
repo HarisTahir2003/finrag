@@ -19,6 +19,7 @@ import logging
 import os
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import streamlit as st
@@ -37,17 +38,21 @@ from finrag.bootstrap import ensure_index  # noqa: E402
 from finrag.config import get_settings  # noqa: E402
 from finrag.ingest.download import list_filings  # noqa: E402
 from finrag.llm import (  # noqa: E402
+    classify_provider_error,
     default_model_for,
     fits_multi_filing_question,
     required_api_key,
 )
+from finrag.logconfig import configure_logging  # noqa: E402
 from finrag.presentation import (  # noqa: E402
     calculator_expression,
     describe_action,
     escape_dollars,
     failure_message,
+    limit_message,
     parse_passages,
 )
+from finrag.ratelimit import spend_check  # noqa: E402
 
 # Same search order as the CLI: the .env beside the working directory wins, and
 # a real exported variable beats both.
@@ -57,6 +62,29 @@ load_dotenv()
 # gRPC logs one INFO line per file descriptor after a fork, and the embedding
 # model forks on load. Harmless, but it buries the server log.
 os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
+
+# Streamlit installs the root handler; what was missing is the level on
+# finrag's own loggers, without which every INFO line below is dropped. On a
+# hosted deployment these logs are the only instrument there is.
+configure_logging()
+
+# Named under "finrag." so the package's level applies; __name__ here is
+# "__main__", which inherits the root's WARNING and would drop every INFO line.
+log = logging.getLogger("finrag.app")
+
+
+def session_id() -> str:
+    """A stable, anonymous identifier for this browser session.
+
+    Streamlit gives each connected browser its own session_state, so a value
+    stored here is exactly "one visitor" for as long as the tab is open. It is
+    random and never leaves the process -- it identifies a rate-limit bucket
+    and a log line, not a person.
+    """
+    if "session_id" not in st.session_state:
+        st.session_state["session_id"] = uuid.uuid4().hex[:12]
+    return st.session_state["session_id"]
+
 
 st.set_page_config(page_title="finrag — SEC filing analyst", page_icon="📈", layout="wide")
 
@@ -320,6 +348,15 @@ if prompt:
         # progress log and the elapsed time with it.
         examples_slot.empty()
 
+        # A visitor's own key is their own budget; only the shared one is
+        # rationed. Checked before any work is done, so a refused question
+        # costs nothing.
+        on_the_house = not st.session_state.get("api_key")
+        verdict = spend_check(settings, session_id(), shared_key=on_the_house)
+        if not verdict.allowed:
+            st.warning(limit_message(verdict, settings))
+            st.stop()
+
         history = chat_history()
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
@@ -332,10 +369,35 @@ if prompt:
             # Streaming rather than invoke(): a question takes tens of seconds
             # across several tool calls, and a bare spinner for that long is
             # indistinguishable from a hang.
+            request_id = uuid.uuid4().hex[:8]
+            deadline = started + settings.answer_timeout_seconds
+            timed_out = False
+            log.info(
+                "q start id=%s session=%s backend=%s chars=%d",
+                request_id,
+                session_id(),
+                settings.llm_backend,
+                len(prompt),
+            )
             with st.status("Reading filings…", expanded=True) as status:
                 try:
                     agent = load_agent(key_fingerprint(api_key), api_key)
                     for chunk in agent.stream({"input": prompt, "chat_history": history}):
+                        # Checked between steps rather than with a signal: the
+                        # agent runs in Streamlit's own script thread, where a
+                        # SIGALRM is not available and killing the thread would
+                        # leave the provider client mid-request. Breaking here
+                        # stops the next tool call, which is where the time
+                        # actually goes.
+                        if time.perf_counter() > deadline:
+                            timed_out = True
+                            log.warning(
+                                "q timeout id=%s after=%.0fs steps=%d",
+                                request_id,
+                                time.perf_counter() - started,
+                                len(steps),
+                            )
+                            break
                         for action in chunk.get("actions", []):
                             st.write(describe_action(action.tool, action.tool_input))
                         for step in chunk.get("steps", []):
@@ -355,10 +417,32 @@ if prompt:
                     )
                 except Exception as exc:  # noqa: BLE001 - shown rather than a stack trace
                     answer = failure_message(exc, settings.llm_backend)
+                    log.warning(
+                        "q failed id=%s after=%.0fs kind=%s",
+                        request_id,
+                        time.perf_counter() - started,
+                        classify_provider_error(exc),
+                    )
                     status.update(label="Failed", state="error", expanded=False)
+
+            if timed_out and not answer:
+                answer = (
+                    f"**That took longer than {settings.answer_timeout_seconds} seconds, so I "
+                    "stopped waiting.** The provider may be busy. Try again, or ask something "
+                    "narrower -- a single figure from a single filing is much quicker than a "
+                    "question that needs several searches."
+                )
 
             answer = answer.strip() or "The agent returned nothing."
             elapsed = time.perf_counter() - started
+            log.info(
+                "q done id=%s elapsed=%.1fs steps=%d answer_chars=%d timed_out=%s",
+                request_id,
+                elapsed,
+                len(steps),
+                len(answer),
+                timed_out,
+            )
             st.markdown(escape_dollars(answer))
             render_sources(steps)
             st.caption(f"{elapsed:.0f}s · {settings.llm_backend} · {model_name}")

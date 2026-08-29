@@ -53,6 +53,15 @@ as an empty index rather than as a download error.
    FINRAG_LLM_BACKEND = "groq"
    FINRAG_RETRIEVAL_K = "20"
    FINRAG_RERANK = "false"
+
+   # Spending limits. The key above is shared by everyone who finds the URL.
+   FINRAG_QUESTIONS_PER_SESSION = "20"
+   FINRAG_QUESTIONS_PER_DAY = "300"
+
+   # Each retry is another request against the daily quota, so one
+   # rate-limited question can cost seven. The default of 6 is right for the
+   # backend comparison and wrong here.
+   FINRAG_MAX_RETRIES = "2"
    ```
 
    Secrets are not committed and are not visible to visitors. `app.py` copies
@@ -110,6 +119,45 @@ delete the line and watch.
 
 Do **not** lower `FINRAG_RETRIEVAL_K` to save memory. k=15 measured RAGAS
 faithfulness 0.650 against k=20's 0.975 — see the comment in `config.py`.
+
+## Spending limits
+
+Groq's free tier is 1,000 requests a day across **everyone who finds the URL**,
+and one agent answer costs several of them -- a search, a read, sometimes a
+calculation. A visitor holding down a starter pill can end the day for
+everybody without meaning any harm and without seeing that they did it.
+
+Two limits, because they fail differently. The per-session one stops the
+ordinary case: someone curious, clicking repeatedly. The daily one stops what
+the session limit cannot see -- many browsers, or one person who reloads to get
+a fresh session.
+
+Neither applies to a visitor who has entered their own key: that is their quota,
+not yours, and rationing it would be rationing their money. It is also what
+makes the limits tolerable -- when the shared budget is gone there is still a
+way to use the demo, and every refusal says so.
+
+This is not authentication. It slows an accident down; nothing in a public demo
+with a shared key stops someone determined.
+
+Set either variable to `"0"` to disable that scope.
+
+## Reading the logs
+
+Every question logs one line when it starts and one when it finishes, sharing a
+request id:
+
+```
+INFO finrag.app: q start id=c48b85dd session=d1061013288b backend=groq chars=41
+INFO finrag.app: q done  id=c48b85dd elapsed=16.4s steps=1 answer_chars=132 timed_out=False
+```
+
+The session id is random, generated in the browser session, and never leaves
+the process. It identifies a rate-limit bucket and a log line, not a person.
+
+A question that runs past `FINRAG_ANSWER_TIMEOUT_SECONDS` (default 120) is
+abandoned between agent steps and the reader is told, rather than watching a
+spinner forever.
 
 ## What to expect
 

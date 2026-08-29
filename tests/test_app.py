@@ -446,3 +446,83 @@ def test_a_visitor_key_is_not_written_into_the_process_environment():
     assert "llm_overrides" in inspect.signature(build_agent).parameters or any(
         p.kind is p.VAR_KEYWORD for p in inspect.signature(build_agent).parameters.values()
     ), "build_agent must accept per-call llm overrides for the key to travel"
+
+
+# ------------------------------------------------- spending the shared key
+
+
+def test_the_app_refuses_a_question_once_the_session_budget_is_gone(monkeypatch):
+    """End to end: the limit is enforced where the money is actually spent.
+
+    The unit tests cover the counter. This covers the wiring -- that the check
+    happens before the agent runs, so a refused question costs nothing, and
+    that the refusal reaches the page instead of an exception.
+    """
+    import finrag.ratelimit as rl
+    from finrag.ratelimit import RateLimiter
+
+    monkeypatch.setattr(rl, "limiter", RateLimiter())
+    monkeypatch.setenv("FINRAG_QUESTIONS_PER_SESSION", "2")
+    monkeypatch.setenv("FINRAG_QUESTIONS_PER_DAY", "99")
+
+    agent = _StubAgent()
+    at = _stubbed_app(monkeypatch, agent)
+    at.run()
+
+    for i in range(2):
+        at.chat_input[0].set_value(f"question {i}").run()
+        assert not at.warning, f"question {i} should have been answered"
+
+    at.chat_input[0].set_value("one too many").run()
+    assert at.warning, "the third question should have been refused"
+
+    refusal = at.warning[-1].value.lower()
+    assert "limit" in refusal
+    assert "key" in refusal and "sidebar" in refusal, "a refusal must offer a way forward"
+
+
+def test_a_visitor_using_their_own_key_is_not_rationed(monkeypatch):
+    """The escape hatch has to actually work, or the limit is just a wall."""
+    import streamlit as st
+
+    import finrag.ratelimit as rl
+    from finrag.ratelimit import RateLimiter
+
+    monkeypatch.setattr(rl, "limiter", RateLimiter())
+    monkeypatch.setenv("FINRAG_QUESTIONS_PER_SESSION", "1")
+    monkeypatch.setenv("FINRAG_QUESTIONS_PER_DAY", "1")
+
+    at = _stubbed_app(monkeypatch, _StubAgent())
+    at.run()
+    # Stand in for the visitor having typed their own key in the sidebar.
+    at.session_state["api_key"] = "gsk_a_visitors_own_key"
+
+    for i in range(4):
+        at.chat_input[0].set_value(f"question {i}").run()
+
+    assert not at.warning, "a visitor spending their own quota must not be rationed"
+    assert st is not None
+
+
+def test_each_question_is_logged_with_an_id_that_ties_start_to_finish(monkeypatch, caplog):
+    """On a hosted deployment the log is the only instrument there is.
+
+    finrag's loggers had no level set outside the CLI, so every INFO line the
+    app emitted was dropped before it reached a handler.
+    """
+    import logging
+
+    at = _stubbed_app(monkeypatch, _StubAgent())
+    at.run()
+    with caplog.at_level(logging.INFO, logger="finrag.app"):
+        at.chat_input[0].set_value("what were net sales").run()
+
+    starts = [r for r in caplog.records if r.getMessage().startswith("q start")]
+    dones = [r for r in caplog.records if r.getMessage().startswith("q done")]
+    assert starts and dones, "a question must log both its start and its outcome"
+
+    def field(message: str, name: str) -> str:
+        return dict(part.split("=", 1) for part in message.split() if "=" in part)[name]
+
+    assert field(starts[0].getMessage(), "id") == field(dones[0].getMessage(), "id")
+    assert "elapsed" in dones[0].getMessage()

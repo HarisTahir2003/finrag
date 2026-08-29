@@ -182,3 +182,24 @@ def failure_message(exc: BaseException, backend: str) -> str:
         "limit. Try asking again, or rephrase the question to name one company "
         "and one fiscal year. The details are in the server log."
     )
+
+
+def limit_message(decision, settings) -> str:
+    """What to tell someone whose question was refused before it ran.
+
+    Refusing without a way forward reads as a broken app, so both branches name
+    one: the visitor's own key is always the escape hatch, and it is free.
+    """
+    own_key = "Put your own free API key in the sidebar to keep going -- it is used only for your session."
+
+    if decision.scope == "session":
+        return (
+            f"**You have asked {decision.limit} questions in the last hour, which is this "
+            f"demo's limit per visitor.** It resets in about {decision.retry_after_human}. "
+            f"{own_key}"
+        )
+    return (
+        "**This demo has used its daily budget of questions.** It runs on a free API tier "
+        f"shared by everyone who visits, and resets in about {decision.retry_after_human}. "
+        f"{own_key}"
+    )

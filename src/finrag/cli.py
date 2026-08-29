@@ -9,7 +9,6 @@ finrag status
 from __future__ import annotations
 
 import argparse
-import logging
 import os
 import re
 import sys
@@ -20,18 +19,10 @@ from .config import DEFAULT_TICKERS, get_settings
 
 
 def _configure_logging(verbose: bool) -> None:
-    """finrag's own logs at INFO, everybody else's at WARNING.
+    """See finrag.logconfig -- shared with the Streamlit app, which had none."""
+    from .logconfig import configure_logging
 
-    basicConfig sets the level on the *root* logger, which every library
-    inherits. At INFO that meant a plain `finrag index` opened with forty lines
-    of httpx traffic from the embedding model checking its cache, and buried
-    its own output underneath. -v restores the full firehose.
-    """
-    logging.basicConfig(
-        level=logging.INFO if verbose else logging.WARNING,
-        format="%(levelname)-7s %(name)s: %(message)s",
-    )
-    logging.getLogger("finrag").setLevel(logging.DEBUG if verbose else logging.INFO)
+    configure_logging(verbose=verbose)
 
 
 def main(argv: list[str] | None = None) -> int:

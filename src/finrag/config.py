@@ -106,6 +106,42 @@ class Settings:
         default_factory=lambda: _env("FINRAG_QUERY_EXPANSION", "").lower() in ("1", "true", "yes")
     )
 
+    # --- spending limits for a shared key ---------------------------------
+    #
+    # A public demo answers with the owner's key. Groq's free tier allows 1,000
+    # requests a day across everyone who finds the URL, and one agent answer
+    # costs several of them -- a search, a read, sometimes a calculation. A
+    # visitor holding down a starter pill can end the day for everybody without
+    # meaning any harm.
+    #
+    # Generous enough that ordinary local use never notices. Set either to 0 to
+    # disable that scope rather than to block everything.
+    questions_per_session: int = field(
+        default_factory=lambda: int(_env("FINRAG_QUESTIONS_PER_SESSION", "20"))
+    )
+    session_window_seconds: int = field(
+        default_factory=lambda: int(_env("FINRAG_SESSION_WINDOW_SECONDS", "3600"))
+    )
+    questions_per_day: int = field(
+        default_factory=lambda: int(_env("FINRAG_QUESTIONS_PER_DAY", "300"))
+    )
+
+    # How long one question may run before the reader is told it gave up. The
+    # agent takes 15-45s normally; well past that is a stalled provider, and
+    # waiting silently is the worst of both outcomes.
+    answer_timeout_seconds: int = field(
+        default_factory=lambda: int(_env("FINRAG_ANSWER_TIMEOUT_SECONDS", "120"))
+    )
+
+    # Client-side retries per provider call. Six is deliberate and stays the
+    # default: llm.MAX_RETRIES is applied uniformly so the backend comparison
+    # ranks models rather than their client libraries' retry policies.
+    #
+    # It is the wrong number for a public demo on a metered free tier, though.
+    # Each retry is another request against the daily quota, so one rate-limited
+    # question can cost seven. Lower it there, not here.
+    max_retries: int = field(default_factory=lambda: int(_env("FINRAG_MAX_RETRIES", "6")))
+
     max_context_tokens_raw: str = field(
         default_factory=lambda: _env("FINRAG_MAX_CONTEXT_TOKENS", "auto")
     )
