@@ -12,7 +12,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 ships no stdlib TOML parser
+    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 SHIPPED_EXTRAS = ("local", "app", "groq")
@@ -151,8 +154,6 @@ def test_pyproject_is_not_poetry_shaped():
     [tool.poetry] section in the hope of making it work; requirements.txt is
     the supported path and already wins.
     """
-    import tomllib
-
     data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert "poetry" not in data.get("tool", {}), (
         "a [tool.poetry] section would make pyproject.toml a viable dependency "

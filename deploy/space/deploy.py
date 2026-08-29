@@ -40,7 +40,11 @@ PAYLOAD: list[tuple[str, str]] = [
     ("LICENSE", "LICENSE"),
     ("app.py", "app.py"),
     ("src", "src"),
-    ("data/chroma_local", "data/chroma_local"),
+    # The 45MB archive, not the 134MB unpacked directory. The directory is
+    # gitignored, so it is absent on a fresh clone and stage() would refuse to
+    # run; the archive is tracked. Dockerfile.space's ensure_index() unpacks it
+    # on boot. Also cuts the Space upload 134MB -> 45MB.
+    ("data/chroma_local.tar.xz", "data/chroma_local.tar.xz"),
 ]
 
 # Anything matching these never ships, whatever the allowlist says. Belt and

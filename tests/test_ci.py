@@ -13,6 +13,11 @@ from pathlib import Path
 import pytest
 import yaml
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 ships no stdlib TOML parser
+    import tomli as tomllib
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
@@ -101,8 +106,6 @@ def test_both_dockerfiles_are_built(workflow):
 
 def test_the_test_job_covers_the_python_versions_pyproject_claims(workflow):
     """requires-python is a promise; the matrix is whether it is kept."""
-    import tomllib
-
     data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     floor = data["project"]["requires-python"].lstrip(">=")
 

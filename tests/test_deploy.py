@@ -31,7 +31,12 @@ def test_the_payload_is_an_allowlist_not_an_ignore_list(deploy):
     """An ignore list leaks by omission; an allowlist can only miss something."""
     sources = {source for source, _ in deploy.PAYLOAD}
 
-    assert "data/chroma_local" in sources, "the index must ship or the Space cannot answer"
+    # The tracked archive, never the gitignored unpacked directory: staging the
+    # latter fails on any fresh clone, which is exactly how this shipped red.
+    assert "data/chroma_local.tar.xz" in sources, "the index must ship or the Space cannot answer"
+    assert "data/chroma_local" not in sources, (
+        "the unpacked directory is gitignored; ship the archive"
+    )
     assert "data" not in sources, "shipping all of data/ would include 1GB of raw filings"
     assert "data/sec_filings" not in sources
     assert not any(s.startswith(".env") for s in sources)
@@ -60,10 +65,29 @@ def test_the_dockerfile_is_uploaded_under_the_name_hugging_face_builds(deploy):
     assert dict(deploy.PAYLOAD)["Dockerfile.space"] == "Dockerfile"
 
 
-def test_every_payload_source_actually_exists(deploy):
-    """A typo here fails at upload time, on the user's machine, mid-deploy."""
-    missing = [source for source, _ in deploy.PAYLOAD if not (ROOT / source).exists()]
-    assert not missing, f"payload names things that are not in the repo: {missing}"
+def test_every_payload_source_is_git_tracked(deploy):
+    """Not merely present in the working tree -- tracked.
+
+    The earlier version of this test checked ``(ROOT / source).exists()``, which
+    passed on the maintainer's laptop (where the unpacked index sits) and failed
+    on every clone and every CI runner (where only the archive is tracked). That
+    is precisely the bug that shipped a red build. A deploy stages a fresh clone,
+    so tracked-ness is the property that actually matters.
+    """
+    import subprocess
+
+    tracked = set(
+        subprocess.run(
+            ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
+        ).stdout.split()
+    )
+
+    missing = [
+        source
+        for source, _ in deploy.PAYLOAD
+        if source not in tracked and not any(t.startswith(source + "/") for t in tracked)
+    ]
+    assert not missing, f"payload names paths git does not track: {missing}"
 
 
 def test_a_credential_shaped_string_stops_the_upload(deploy, tmp_path):

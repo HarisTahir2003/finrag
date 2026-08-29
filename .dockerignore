@@ -17,12 +17,13 @@ dist/
 # 1.2GB of raw EDGAR submissions. Needed to *build* an index, never to serve
 # one -- the index itself is mounted or copied separately.
 data/
-# ...except the index, which Dockerfile.space bakes in because a hosted demo
-# has no host filesystem to mount it from. Re-including one subdirectory of an
-# excluded one is last-match-wins and was verified against this Docker rather
-# than assumed. The default Dockerfile copies no part of data/, so this costs
-# it 134MB of build context and nothing in the image.
-!data/chroma_local
+# ...except the compressed index, which Dockerfile.space bakes in because a
+# hosted demo has no host filesystem to mount it from. The archive rather than
+# the unpacked directory: the directory is gitignored and absent on a fresh
+# clone, so it cannot be in the build context anyway. Re-including one path of
+# an excluded directory is last-match-wins. The default Dockerfile copies no
+# part of data/, so this costs it 45MB of build context and nothing in the image.
+!data/chroma_local.tar.xz
 
 .git/
 .github/

@@ -73,12 +73,13 @@ ENV HF_HUB_OFFLINE=1
 
 RUN echo 'export PATH="/opt/venv/bin:$PATH"' >> /home/user/.profile
 
-# The index, owned by the runtime user because Chroma opens its sqlite
-# read-write even to read: it creates -wal and -shm beside the database. A
-# root-owned copy would fail at the first question with "attempt to write a
-# readonly database", which is the same constraint that stopped ./data being
-# mounted :ro in compose.yaml.
-COPY --chown=user:user data/chroma_local /app/data/chroma_local
+# The 45MB archive, not the 134MB unpacked directory: the directory is
+# gitignored (only the archive is tracked), so COPYing it fails on any fresh
+# clone -- including the CI runner and anyone building this by hand -- with
+# "failed to compute cache key: not found". app.py's ensure_index() unpacks it
+# on first boot in ~2s. Owned by the runtime user because Chroma opens its
+# sqlite read-write even to read, creating -wal/-shm beside the database.
+COPY --chown=user:user data/chroma_local.tar.xz /app/data/
 COPY --chown=user:user app.py ./
 
 # 7860 is the port Hugging Face expects a Space to serve on.
