@@ -64,6 +64,13 @@ WORKDIR /app
 # HuggingFace being reachable at that moment.
 RUN finrag warmup
 
+# ENV PATH above covers `docker exec ... bash`, which is an interactive
+# non-login shell. It does NOT cover a *login* shell -- `bash -lc`, `sh -lc`,
+# and most CI runners -- because those source /etc/profile, which overwrites
+# PATH and drops /opt/venv/bin. The result is `finrag: command not found`
+# inside an image whose whole job is running finrag.
+RUN echo 'export PATH="/opt/venv/bin:$PATH"' >> /home/finrag/.profile
+
 COPY --chown=finrag:finrag app.py ./
 
 EXPOSE 8000 8501
