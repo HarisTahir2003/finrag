@@ -1,0 +1,95 @@
+# finrag as a single self-contained container: the Streamlit UI, the models, and
+# the index, with nothing mounted from outside.
+#
+# The main Dockerfile builds a two-service stack for local work and mounts
+# ./data, because a 134MB index that changes whenever the corpus is re-indexed
+# has no business in an image you rebuild while developing. A hosted demo is the
+# opposite case: there is no host filesystem to mount, so the index travels in
+# the image and the container answers questions the moment it starts.
+#
+# Build:  docker build -f Dockerfile.space -t finrag-space .
+# Run:    docker run --rm -p 7860:7860 -e GROQ_API_KEY=... finrag-space
+
+# ----------------------------------------------------------------- builder
+FROM python:3.12-slim AS builder
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch
+
+WORKDIR /src
+COPY pyproject.toml README.md ./
+COPY src ./src
+# Narrower than the local image's extras, and each omission is deliberate.
+# [api] is FastAPI, which this container does not run -- the UI talks to the
+# agent directly. [vertex] is unusable here on principle rather than on size:
+# it authenticates with Application Default Credentials, which are a file on
+# the developer's laptop and cannot exist on someone else's host.
+RUN pip install ".[local,app,groq]"
+
+# ----------------------------------------------------------------- runtime
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    HF_HOME=/opt/models \
+    GRPC_VERBOSITY=ERROR \
+    # No bind mount here: the index lives in the image at this path.
+    FINRAG_DATA_ROOT=/app/data \
+    # Settings.llm_backend defaults to anthropic. compose.yaml supplies groq
+    # explicitly and this image has no compose file to do that, so without this
+    # line the sidebar would ask for an Anthropic key and the first question
+    # would fail on an extra that was deliberately not installed.
+    FINRAG_LLM_BACKEND=groq \
+    FINRAG_RETRIEVAL_K=20
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/venv /opt/venv
+
+# uid 1000 rather than the local image's 10001: Hugging Face documents 1000 as
+# the expected user for a Docker Space, and a mismatch shows up as permission
+# errors on paths the platform prepares.
+RUN useradd --create-home --uid 1000 user \
+    && mkdir -p /opt/models /app \
+    && chown user:user /opt/models /app
+USER user
+WORKDIR /app
+
+RUN finrag warmup
+
+# After warmup, never before: the download above needs the Hub. From here on
+# nothing should reach for it, and saying so turns a silent network round trip
+# on every model load into a local read.
+ENV HF_HUB_OFFLINE=1
+
+RUN echo 'export PATH="/opt/venv/bin:$PATH"' >> /home/user/.profile
+
+# The index, owned by the runtime user because Chroma opens its sqlite
+# read-write even to read: it creates -wal and -shm beside the database. A
+# root-owned copy would fail at the first question with "attempt to write a
+# readonly database", which is the same constraint that stopped ./data being
+# mounted :ro in compose.yaml.
+COPY --chown=user:user data/chroma_local /app/data/chroma_local
+COPY --chown=user:user app.py ./
+
+# 7860 is the port Hugging Face expects a Space to serve on.
+EXPOSE 7860
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -fsS http://localhost:7860/_stcore/health || exit 1
+
+CMD ["streamlit", "run", "app.py", \
+     "--server.address=0.0.0.0", \
+     "--server.port=7860", \
+     "--server.headless=true", \
+     "--browser.gatherUsageStats=false", \
+     "--server.fileWatcherType=none"]
