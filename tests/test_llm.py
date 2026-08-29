@@ -256,11 +256,27 @@ def test_the_quota_message_tells_the_visitor_what_to_do():
     )
 
 
-def test_an_unclassified_failure_still_shows_the_error():
-    """Swallowing the detail would make a real bug undiagnosable."""
+def test_an_unclassified_failure_is_logged_rather_than_displayed(caplog):
+    """The detail has to survive, but not on the page.
+
+    This test asserted the opposite until the app was public: showing the
+    exception is right for a tool you run yourself and wrong for a page
+    strangers open. This is the branch that put a provider's raw JSON in front
+    of a visitor once already, including its upgrade link, so the text goes to
+    the log where the operator is looking and the reader gets a sentence they
+    can act on.
+    """
+    import logging
+
     from finrag.presentation import failure_message
 
-    assert "chroma exploded" in failure_message(ValueError("chroma exploded"), "groq")
+    with caplog.at_level(logging.ERROR):
+        shown = failure_message(ValueError("chroma exploded at /home/adminuser/venv"), "groq")
+
+    assert "chroma exploded" not in shown
+    assert "/home/adminuser" not in shown, "host paths must not reach a public page"
+    assert "went wrong" in shown.lower()
+    assert "chroma exploded" in caplog.text, "the detail must still be diagnosable"
 
 
 def test_an_over_budget_request_is_not_reported_as_a_rate_limit():

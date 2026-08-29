@@ -14,18 +14,28 @@
 # base dependencies plus the [local], [app] and [groq] extras.
 #
 # ---------------------------------------------------------------------------
-# CPU-only torch, pinned by URL, and this line is the whole reason the build
-# succeeds. `pip install torch` on Linux fetches a 527MB wheel that declares
-# fifteen nvidia-* packages plus triton -- gigabytes of CUDA, on a free tier
-# with two cores and no GPU. It is the single most common way a build like this
-# dies. The +cpu wheel is 183MB and declares none of them.
+# CPU-only torch, and this is the line that decides whether the build succeeds.
+# A plain `torch` requirement resolves to the CUDA wheel on Linux: 527MB
+# declaring fifteen nvidia-* packages plus triton, onto a free tier with two
+# cores and no GPU. It is the most common way a build like this dies.
 #
-# The URL is cp312-specific by construction. If the host runs a different
-# Python the install fails loudly with "not a supported wheel on this platform",
-# which is a clear error with an obvious fix, not a silent one.
-https://download.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl
+# The "+cpu" local version identifier exists only on PyTorch's own index, so pip
+# has to take it from there -- while still choosing the right wheel for the
+# machine it is running on. An earlier version of this file pinned the wheel URL
+# directly, which worked and was quietly architecture-locked: it named
+# manylinux_2_28_x86_64, and resolving it on an aarch64 image failed with "not a
+# supported wheel on this platform". Verified both ways on aarch64: the URL form
+# fails, this form resolves 2.13.0+cpu with zero CUDA packages.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.13.0+cpu
 
 # --- base (pyproject [project.dependencies]) -------------------------------
+# Upper bounds because this is deployed: Streamlit Community Cloud reinstalls
+# from this file when it rebuilds, so an unbounded floor means a version nobody
+# has tested can arrive on a Tuesday, triggered by a visitor rather than by a
+# push. `chromadb>=0.5` had already resolved to 1.5.9 -- a floor two major
+# versions behind constrains nothing at all. Same idiom as the
+# langchain-community ceiling below, which is load-bearing for its own reason.
 beautifulsoup4>=4.12.3
 lxml>=5.1.0
 sec-edgar-downloader>=5.0.0
@@ -36,7 +46,7 @@ langchain-community>=0.3,<0.4
 rank_bm25>=0.2.2
 langchain-text-splitters>=0.2.0
 langchain-chroma>=0.1.2
-chromadb>=0.5
+chromadb>=1.5,<2
 pydantic>=2.10.0
 python-dotenv>=1.0.1
 pyyaml>=6.0
@@ -46,7 +56,7 @@ sentence-transformers>=3.0.0
 langchain-huggingface>=0.1.0
 
 # --- [app] -----------------------------------------------------------------
-streamlit>=1.40.0
+streamlit>=1.40,<2
 
 # --- [groq]: the free LLM tier ---------------------------------------------
 langchain-groq>=0.2

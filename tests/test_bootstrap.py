@@ -158,3 +158,57 @@ def test_packing_without_an_index_says_so(tmp_path):
 
     with pytest.raises(FileNotFoundError, match="finrag index"):
         pack_index(_settings(tmp_path))
+
+
+def test_a_failed_unpack_leaves_no_index_behind(tmp_path):
+    """Half an index must not look like an index.
+
+    ensure_index's guard is "the directory exists and is not empty", which a
+    partially extracted directory satisfies. Extracting into a sibling and
+    renaming means the directory is either absent or complete -- so a failure
+    leaves nothing for the next caller to mistake for a corpus.
+    """
+    settings = _settings(tmp_path)
+    stray = tmp_path / "loose.txt"
+    stray.write_text("x")
+    archive = tmp_path / ARCHIVE_NAME
+    with tarfile.open(archive, "w:xz") as tar:
+        tar.add(stray, arcname="loose.txt")
+
+    with pytest.raises(RuntimeError):
+        ensure_index(settings)
+
+    assert not settings.index_dir.exists(), "a failed unpack left a partial index"
+
+
+def test_the_staging_directory_is_always_cleaned_up(tmp_path):
+    """Both paths: success, and failure."""
+    settings = _settings(tmp_path)
+    _make_archive(tmp_path, {"chroma.sqlite3": "db"})
+
+    assert ensure_index(settings) is True
+    leftovers = [p.name for p in tmp_path.iterdir() if p.name.startswith(".")]
+    assert not leftovers, f"staging directory survived a successful unpack: {leftovers}"
+
+
+def test_losing_the_race_keeps_the_winners_index(tmp_path, monkeypatch):
+    """Two cold-start visitors can arrive inside the ~2.4s extraction window.
+
+    The loser must not raise, and must not clobber the complete index the
+    winner just put there.
+    """
+    settings = _settings(tmp_path)
+    _make_archive(tmp_path, {"chroma.sqlite3": "ours"})
+
+    real_rename = Path.rename
+
+    def rename_after_someone_else_won(self, target):
+        # Simulate the other thread finishing during our extraction.
+        Path(target).mkdir(parents=True, exist_ok=True)
+        (Path(target) / "chroma.sqlite3").write_text("theirs")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", rename_after_someone_else_won)
+
+    assert ensure_index(settings) is False
+    assert (settings.index_dir / "chroma.sqlite3").read_text() == "theirs"

@@ -17,6 +17,7 @@ the real index: 134MB -> 45MB, 2.4 seconds to unpack, done once per container.
 from __future__ import annotations
 
 import logging
+import shutil
 import tarfile
 from pathlib import Path
 
@@ -57,19 +58,48 @@ def ensure_index(settings: Settings | None = None, archive: Path | None = None) 
     destination.mkdir(parents=True, exist_ok=True)
     log.info("unpacking %s into %s", archive.name, destination)
 
-    with tarfile.open(archive, "r:xz") as tar:
-        # filter="data" refuses absolute paths, parent-directory escapes,
-        # symlinks pointing outside the tree, and device nodes. Without it a
-        # tarball can write anywhere the process can, which is the whole
-        # CVE-2007-4559 family. Python 3.14 makes this the default; naming it
-        # keeps the behaviour identical on 3.10 through 3.13.
-        tar.extractall(destination, filter="data")
+    # Unpack into a sibling and rename, rather than extracting in place.
+    #
+    # The guard above treats "the directory exists and is not empty" as "there
+    # is an index here", which a half-extracted directory satisfies. This runs
+    # inside a live web process on a host that serves every visitor from one
+    # container, so a second arrival during the ~2.4s extraction would find a
+    # partial index and use it -- reporting a chunk count that grows as the
+    # other thread works. Rename on the same filesystem is atomic, so the
+    # directory either is not there or is complete.
+    staging = destination / f".{index_dir.name}.unpacking"
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
 
-    if not index_dir.exists():
-        raise RuntimeError(
-            f"{archive.name} did not contain {index_dir.name}/ -- "
-            "the archive was built from the wrong directory"
-        )
+    try:
+        with tarfile.open(archive, "r:xz") as tar:
+            # filter="data" refuses absolute paths, parent-directory escapes,
+            # symlinks pointing outside the tree, and device nodes. Without it
+            # a tarball can write anywhere the process can, which is the whole
+            # CVE-2007-4559 family. Python 3.14 makes this the default; naming
+            # it keeps the behaviour identical on 3.10 through 3.13.
+            tar.extractall(staging, filter="data")
+
+        unpacked = staging / index_dir.name
+        if not unpacked.exists():
+            raise RuntimeError(
+                f"{archive.name} did not contain {index_dir.name}/ -- "
+                "the archive was built from the wrong directory"
+            )
+
+        try:
+            unpacked.rename(index_dir)
+        except OSError:
+            # Lost the race: another thread finished first. Its copy is
+            # complete, so there is nothing to do but drop ours.
+            if index_dir.exists() and any(index_dir.iterdir()):
+                log.info("another worker unpacked the index first; keeping theirs")
+                return False
+            raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
     return True
 
 

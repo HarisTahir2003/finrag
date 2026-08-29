@@ -190,14 +190,27 @@ def test_answer_and_sources_are_rendered(monkeypatch):
     assert len(passages) == 2
 
 
-def test_a_failing_provider_is_reported_not_raised(monkeypatch):
-    """A dead backend should read as a message, not a stack trace."""
+def test_a_failing_provider_is_reported_not_raised(monkeypatch, caplog):
+    """A dead backend should read as a message, not a stack trace.
+
+    The message no longer quotes the exception. This test asserted that it did,
+    until the app became public: an unrecognised provider error's body is
+    written for whoever operates the service, and it has already put a raw
+    Groq payload -- upgrade link included -- in front of a visitor once. The
+    detail moves to the log, and both halves are checked here.
+    """
+    import logging
+
     at = _stubbed_app(monkeypatch, _StubAgent(fail=True))
     at.run()
-    at.chat_input[0].set_value("anything").run()
+    with caplog.at_level(logging.ERROR):
+        at.chat_input[0].set_value("anything").run()
 
     assert not at.exception
-    assert "provider unavailable" in " ".join(str(m.value) for m in at.markdown)
+    rendered = " ".join(str(m.value) for m in at.markdown)
+    assert "went wrong" in rendered.lower(), "the reader still has to be told"
+    assert "provider unavailable" not in rendered, "the raw exception reached the page"
+    assert "provider unavailable" in caplog.text, "the detail must still be diagnosable"
 
 
 def test_an_empty_answer_does_not_render_a_blank_bubble(monkeypatch):

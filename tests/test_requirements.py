@@ -17,6 +17,14 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 SHIPPED_EXTRAS = ("local", "app", "groq")
 
+# Declared in requirements.txt but not in pyproject, deliberately. torch
+# arrives transitively through sentence-transformers either way; naming it here
+# is the only way to say WHICH build, and on Linux the default is a 527MB CUDA
+# wheel with fifteen nvidia-* dependencies. Anything added to this set is a
+# claim that the deployment needs to control a transitive dependency's version,
+# which needs a reason written next to it.
+PINNED_TRANSITIVES = {"torch"}
+
 
 def _names(requirements: list[str]) -> set[str]:
     """Distribution names, normalised: `Foo_Bar>=1` and `foo-bar` are one thing."""
@@ -54,25 +62,42 @@ def test_requirements_covers_everything_the_app_imports():
 
 def test_requirements_ships_nothing_the_app_does_not_need():
     """Extras cost build time and memory on a tier that has little of either."""
-    extra = _requirements_declared() - _pyproject_expected()
-    assert not extra, f"requirements.txt declares {sorted(extra)}, which pyproject does not"
+    extra = _requirements_declared() - _pyproject_expected() - PINNED_TRANSITIVES
+    assert not extra, (
+        f"requirements.txt declares {sorted(extra)}, which pyproject does not. "
+        "If this is a transitive dependency whose build must be controlled, add "
+        "it to PINNED_TRANSITIVES with the reason."
+    )
 
 
-def test_torch_is_pinned_to_a_cpu_only_wheel():
+def test_torch_comes_from_the_cpu_index_on_every_architecture():
     """The line that decides whether the build succeeds at all.
 
     A plain `torch` requirement resolves to the CUDA wheel on Linux: 527MB and
     fifteen nvidia-* dependencies, on a free tier with no GPU.
+
+    Two halves, and both are needed. The extra index is where a "+cpu" build
+    exists at all; the "+cpu" local version is what forces pip to take it from
+    there rather than from PyPI. Pinning the wheel URL instead also works and
+    is architecture-locked -- the x86_64 URL this file used to carry fails to
+    resolve on aarch64 with "not a supported wheel on this platform".
     """
-    text = (ROOT / "requirements.txt").read_text(encoding="utf-8")
-    torch_lines = [
-        ln
-        for ln in text.splitlines()
-        if "torch" in ln and not ln.strip().startswith("#") and ln.strip()
+    lines = [
+        ln.strip()
+        for ln in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
     ]
 
+    assert any(
+        "--extra-index-url" in ln and "download.pytorch.org/whl/cpu" in ln for ln in lines
+    ), "no CPU index declared; a plain torch requirement pulls CUDA on Linux"
+
+    torch_lines = [ln for ln in lines if ln.split("=")[0].strip().lower() == "torch"]
     assert torch_lines, "torch must be declared explicitly, not left to a transitive resolve"
     for line in torch_lines:
-        assert "download.pytorch.org/whl/cpu" in line, (
-            f"{line.strip()!r} does not pin the CPU index; this build pulls CUDA"
+        assert "+cpu" in line, (
+            f"{line!r} does not request a +cpu build, so pip may take the CUDA wheel from PyPI"
         )
+    assert not any(".whl" in ln for ln in lines), (
+        "a pinned wheel URL is architecture-locked; use the +cpu local version instead"
+    )

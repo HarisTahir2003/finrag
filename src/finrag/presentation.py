@@ -13,11 +13,15 @@ parsing, and a copy in each would drift.
 
 from __future__ import annotations
 
+import logging
 import re
 
 # Fixed by Retrieved.as_context(): a filing header, then numbered chunk blocks.
 _FILING_HEADER = re.compile(r"^---\s*([A-Z.]+)\s+FY(\d{4})\s*---", re.MULTILINE)
 _CHUNK_BREAK = re.compile(r"\n\[chunk \d+\]\n")
+
+
+log = logging.getLogger(__name__)
 
 
 def parse_passages(observation: str) -> tuple[str, list[str]]:
@@ -160,4 +164,21 @@ def failure_message(exc: BaseException, backend: str) -> str:
             "Leaving the box empty falls back to the key configured on the "
             "server, if there is one."
         )
-    return f"Something went wrong: {exc}"
+    # Unclassified. The detail goes to the log, not to the page.
+    #
+    # This is the branch that put a provider's raw JSON in front of a visitor
+    # once already -- including its "Upgrade to Dev Tier" link -- because a 413
+    # was not being recognised. Whatever the next unrecognised error is, its
+    # body is written for whoever operates the service, not for whoever is
+    # reading a 10-K, and it can carry host paths or request details that a
+    # public page has no business showing.
+    # exc_info=exc rather than log.exception(): this is passed the exception as
+    # an argument and may be called outside an active except block, where
+    # log.exception() records "NoneType: None" and loses the very detail it is
+    # here to preserve.
+    log.error("unclassified %s failure shown to a reader: %s", backend, exc, exc_info=exc)
+    return (
+        "**Something went wrong answering that.** It was not a quota or a rate "
+        "limit. Try asking again, or rephrase the question to name one company "
+        "and one fiscal year. The details are in the server log."
+    )

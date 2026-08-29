@@ -15,6 +15,7 @@ and shown under the answer.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import sys
 import time
@@ -79,8 +80,12 @@ settings = get_settings()
 try:
     if ensure_index(settings):
         st.toast("Unpacked the search index", icon="📦")
-except Exception as _exc:  # noqa: BLE001 - the index gate below reports this properly
-    st.error(f"Could not prepare the index: {_exc}")
+except Exception:  # noqa: BLE001 - the index gate below reports this properly
+    # The exception text carries host filesystem paths, which a public page
+    # should not show. logging.exception puts the traceback in the server log,
+    # where the person who can act on it is looking.
+    logging.getLogger(__name__).exception("could not unpack the index")
+    st.error("Could not prepare the search index. The server log has the details.")
 
 
 @st.cache_data(show_spinner=False)

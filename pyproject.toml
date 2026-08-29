@@ -32,7 +32,10 @@ dependencies = [
     "rank_bm25>=0.2.2",
     "langchain-text-splitters>=0.2.0",
     "langchain-chroma>=0.1.2",
-    "chromadb>=0.5",
+    # Upper bound because this is deployed and the host reinstalls on rebuild:
+    # an unbounded floor lets an untested version arrive without a push. The
+    # old ">=0.5" had already resolved to 1.5.9, so it constrained nothing.
+    "chromadb>=1.5,<2",
     "pydantic>=2.10.0",
     "python-dotenv>=1.0.1",
     "pyyaml>=6.0",
@@ -57,7 +60,7 @@ openai-compatible = ["langchain-openai>=0.2", "langchain-classic>=1.0.0"]
 # Structure-aware chunking. Plain `unstructured`: the `html` extra was folded
 # into the base package, so asking for it now only earns a pip warning.
 semantic = ["unstructured>=0.18.0"]
-app = ["streamlit>=1.40.0"]
+app = ["streamlit>=1.40,<2"]
 # The HTTP service. Declared rather than inherited: fastapi and uvicorn
 # currently arrive via mlflow and chromadb, so an install without [eval]
 # would lose the API without losing the module that imports it.
