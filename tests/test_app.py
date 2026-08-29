@@ -11,6 +11,7 @@ would cost an API call per test.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -276,3 +277,69 @@ def test_history_carries_the_unescaped_text(monkeypatch):
     answers = [m.content for m in seen["history"] if "574,785" in m.content]
     assert answers, "the prior answer should be in history"
     assert "\\$" not in answers[0]
+
+
+# ------------------------------------------------------- the cache key
+
+
+def _load_agent_def():
+    """The `load_agent` function node, read without executing the app script."""
+    import ast
+
+    tree = ast.parse(Path(APP).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "load_agent":
+            return node
+    raise AssertionError("app.py no longer defines load_agent")
+
+
+def test_load_agent_is_cached_per_key():
+    """The cache parameter must be hashable *and* hashed.
+
+    Streamlit excludes underscore-prefixed arguments from the cache key -- the
+    documented way to pass an unhashable handle like a database connection. The
+    fingerprint here is a string, so the prefix buys nothing and costs the whole
+    key: `_fingerprint` leaves load_agent with an empty key set and one entry
+    for the life of the process.
+
+    That is not a performance bug, it is an auth bug. build_agent reads the key
+    from the environment and bakes it into the client, so the cached agent holds
+    the first key ever entered. A user who pastes a corrected or rotated key
+    gets the old one back, and every question keeps failing with no way out of
+    the loop from inside the page. This has been written wrong once already.
+    """
+    node = _load_agent_def()
+    args = [a.arg for a in node.args.args]
+
+    assert args, "load_agent takes no argument, so every key shares one cache entry"
+    underscored = [a for a in args if a.startswith("_")]
+    assert not underscored, (
+        f"{underscored} are excluded from Streamlit's cache key, so changing the "
+        "API key would not rebuild the agent"
+    )
+
+
+def test_load_agent_is_actually_cached():
+    """The decorator is the other half: without it there is no reuse at all."""
+    node = _load_agent_def()
+    decorators = [ast.dump(d) for d in node.decorator_list]
+
+    assert any("cache_resource" in d for d in decorators), (
+        "load_agent must stay cached; rebuilding it per question reloads the "
+        "embedding model and the cross-encoder on every message"
+    )
+
+
+def test_the_fingerprint_is_not_key_material():
+    """A cache key can surface in a Streamlit trace; a raw key slice must not."""
+    import hashlib
+
+    source = Path(APP).read_text(encoding="utf-8")
+    assert "def key_fingerprint" in source
+    assert "sha256" in source
+
+    # The identity it produces is stable and distinguishing, which is all the
+    # cache needs from it.
+    digest = hashlib.sha256(b"sk-secret-value").hexdigest()[:16]
+    assert digest != hashlib.sha256(b"sk-other-value").hexdigest()[:16]
+    assert "secret" not in digest

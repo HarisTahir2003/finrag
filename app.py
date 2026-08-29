@@ -14,6 +14,7 @@ and shown under the answer.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 
@@ -118,13 +119,28 @@ with st.sidebar:
             st.rerun()
 
 
+def key_fingerprint(api_key: str) -> str:
+    """A stable identifier for a key that is not itself key material."""
+    return hashlib.sha256(api_key.encode()).hexdigest()[:16]
+
+
 @st.cache_resource(show_spinner=False)
-def load_agent(_key_fingerprint: str):
+def load_agent(fingerprint: str):
     """Build the agent once per API key.
 
-    The key fingerprint is a cache parameter rather than a closure variable on
-    purpose: the previous version closed over it, so the first key entered in a
-    session was pinned and changing it silently had no effect.
+    The fingerprint is a cache parameter rather than a closure variable on
+    purpose: an earlier version closed over it, so the first key entered was
+    pinned and changing it silently had no effect.
+
+    It must NOT be named with a leading underscore. Streamlit deliberately
+    excludes underscore-prefixed arguments from the cache key -- the convention
+    for passing unhashable things like a database handle -- so `_fingerprint`
+    leaves this function with an empty key set and one entry forever, which is
+    the exact bug the paragraph above claims to have fixed. It was named that
+    way once and reinstated it. The key is read from the environment inside
+    build_agent and baked into the client at construction, so a stale entry
+    means a corrected or rotated key never takes effect and every question
+    keeps failing against the old one.
     """
     from finrag.agent import build_agent
     from finrag.ingest.index import open_store
@@ -245,7 +261,7 @@ if prompt:
             # indistinguishable from a hang.
             with st.status("Reading filings…", expanded=True) as status:
                 try:
-                    agent = load_agent(api_key[-8:])
+                    agent = load_agent(key_fingerprint(api_key))
                     for chunk in agent.stream({"input": prompt, "chat_history": history}):
                         for action in chunk.get("actions", []):
                             st.write(describe_action(action.tool, action.tool_input))
