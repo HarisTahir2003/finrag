@@ -23,6 +23,12 @@ services:
       FINRAG_DATA_ROOT: /app/data
       # Passed through from the host so no key is ever written into the image.
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      # ":-groq" is the fallback when the variable is unset ANYWHERE -- and
+      # compose reads ./.env for interpolation automatically, so a .env that
+      # pins a backend silently wins over this default. That is how the key
+      # above arrives too, so it is wanted behaviour, but it means the line
+      # below does not read as "groq unless told otherwise". Override per run:
+      #   FINRAG_LLM_BACKEND=groq docker compose up -d
       FINRAG_LLM_BACKEND: ${FINRAG_LLM_BACKEND:-groq}
       FINRAG_RETRIEVAL_K: ${FINRAG_RETRIEVAL_K:-20}
     restart: unless-stopped
