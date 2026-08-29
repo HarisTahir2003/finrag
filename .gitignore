@@ -5,7 +5,17 @@
 # ---- Data, models, vector stores ----
 # The corpus is downloaded from SEC EDGAR and rebuilt by the ingest step; it is
 # never committed. FINRAG_DATA_ROOT points here by default.
-data/
+# data/* rather than data/: git cannot re-include a file whose parent
+# directory is excluded, because it never descends into it to look. Docker's
+# ignore file does allow that, which is a genuinely different rule between two
+# nearly identical formats.
+data/*
+# ...except the compressed index. A host that only clones the repo has no
+# way to build one, and 134MB does not go in git -- 45MB of it does. Git LFS
+# would be the usual answer and is the wrong one here: these platforms do not
+# reliably fetch LFS objects, and the failure is a 130-byte pointer file
+# arriving where a database was expected, which surfaces as an empty index.
+!data/chroma_local.tar.xz
 *.sqlite3
 chroma_db*/
 sec-edgar-filings/

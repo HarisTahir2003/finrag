@@ -1,12 +1,53 @@
-# The package and its dependencies are declared in pyproject.toml. This file
-# exists so `pip install -r requirements.txt` still works; it installs finrag in
-# editable mode with the extras needed to run the notebook and the app.
+# Dependencies for a hosted Streamlit deployment (Streamlit Community Cloud and
+# anything else that installs a requirements file rather than building an image).
 #
-# Extras, if you want a narrower install:
-#   .[local]     sentence-transformers embeddings - no API key, used by CI
-#   .[google]    Gemini + text-embedding-004 - needs GOOGLE_API_KEY
-#   .[semantic]  structure-aware chunking via unstructured
-#   .[app]       Streamlit front end
-#   .[dev]       pytest + ruff
+# This file previously held `-e .[local,google,semantic,app,dev]` as a
+# convenience for local installs. Streamlit Community Cloud requires a
+# requirements.txt at the repository root and installs exactly what it finds
+# there, so the name had to go to the deployment set. For a development
+# environment use pyproject.toml directly, which is the source of truth either
+# way:
+#
+#     pip install -e ".[local,google,semantic,app,dev]"
+#
+# tests/test_requirements.py asserts this file has not drifted from the
+# base dependencies plus the [local], [app] and [groq] extras.
+#
+# ---------------------------------------------------------------------------
+# CPU-only torch, pinned by URL, and this line is the whole reason the build
+# succeeds. `pip install torch` on Linux fetches a 527MB wheel that declares
+# fifteen nvidia-* packages plus triton -- gigabytes of CUDA, on a free tier
+# with two cores and no GPU. It is the single most common way a build like this
+# dies. The +cpu wheel is 183MB and declares none of them.
+#
+# The URL is cp312-specific by construction. If the host runs a different
+# Python the install fails loudly with "not a supported wheel on this platform",
+# which is a clear error with an obvious fix, not a silent one.
+https://download.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl
 
--e .[local,google,semantic,app,dev]
+# --- base (pyproject [project.dependencies]) -------------------------------
+beautifulsoup4>=4.12.3
+lxml>=5.1.0
+sec-edgar-downloader>=5.0.0
+langchain-core>=0.3
+# <0.4 is load-bearing: 0.4 dropped chat_models.vertexai, which ragas imports
+# unconditionally. See the note in pyproject.toml.
+langchain-community>=0.3,<0.4
+rank_bm25>=0.2.2
+langchain-text-splitters>=0.2.0
+langchain-chroma>=0.1.2
+chromadb>=0.5
+pydantic>=2.10.0
+python-dotenv>=1.0.1
+pyyaml>=6.0
+
+# --- [local]: embeddings that need no API key ------------------------------
+sentence-transformers>=3.0.0
+langchain-huggingface>=0.1.0
+
+# --- [app] -----------------------------------------------------------------
+streamlit>=1.40.0
+
+# --- [groq]: the free LLM tier ---------------------------------------------
+langchain-groq>=0.2
+langchain-classic>=1.0.0

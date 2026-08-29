@@ -16,16 +16,27 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 import time
+from pathlib import Path
 
 import streamlit as st
 from dotenv import find_dotenv, load_dotenv
 
-from finrag.agent import answer_text
-from finrag.config import get_settings
-from finrag.ingest.download import list_filings
-from finrag.llm import default_model_for, required_api_key
-from finrag.presentation import (
+# A platform-as-a-service clones the repository, installs a requirements file
+# and runs this script from the repository root -- it does not `pip install`
+# the project, so `finrag` is not importable yet. Adding src/ costs nothing
+# where the package IS installed properly: the same files resolve either way.
+_SRC = Path(__file__).resolve().parent / "src"
+if _SRC.is_dir() and str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from finrag.agent import answer_text  # noqa: E402
+from finrag.bootstrap import ensure_index  # noqa: E402
+from finrag.config import get_settings  # noqa: E402
+from finrag.ingest.download import list_filings  # noqa: E402
+from finrag.llm import default_model_for, required_api_key  # noqa: E402
+from finrag.presentation import (  # noqa: E402
     calculator_expression,
     describe_action,
     escape_dollars,
@@ -44,7 +55,28 @@ os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
 
 st.set_page_config(page_title="finrag — SEC filing analyst", page_icon="📈", layout="wide")
 
+# Hosted Streamlit puts secrets in st.secrets, not the environment, and every
+# module in `finrag` reads os.environ. Copying them across here rather than
+# teaching each module about Streamlit keeps the package usable from the CLI,
+# the API and the tests. setdefault, so a real environment variable still wins
+# and a local .env is not overridden by a stale secrets file.
+try:
+    for _name, _value in dict(st.secrets).items():
+        if isinstance(_value, str):
+            os.environ.setdefault(_name, _value)
+except Exception:  # noqa: BLE001 - no secrets file is the normal local case
+    pass
+
 settings = get_settings()
+
+# On a host that only gives us a git checkout there is no 134MB index, because
+# 134MB does not go in git -- a 45MB archive of it does. Unpacks once per
+# container, then returns immediately forever after.
+try:
+    if ensure_index(settings):
+        st.toast("Unpacked the search index", icon="📦")
+except Exception as _exc:  # noqa: BLE001 - the index gate below reports this properly
+    st.error(f"Could not prepare the index: {_exc}")
 
 
 @st.cache_data(show_spinner=False)
