@@ -379,6 +379,26 @@ def default_model_for(backend: str) -> str:
     return DEFAULT_MODELS.get(backend, "")
 
 
+# Backends whose free tier caps a single request too low for a question that
+# needs two filings at once. Groq allows 8,000 tokens per minute and a
+# two-company comparison asks for about 8,600, so it fails every time -- with a
+# 413, not a 429, because the request is too big for the window rather than
+# arriving too often.
+TIGHT_CONTEXT_BACKENDS = frozenset({"groq"})
+
+
+def fits_multi_filing_question(settings: Settings | None = None) -> bool:
+    """Whether this backend can answer a question spanning two filings.
+
+    Used to decide what a demo offers to suggest. Suggesting a question that
+    the configured backend cannot answer is worse than suggesting nothing: the
+    visitor reads the failure as the system being broken, which on the evidence
+    in front of them is a reasonable conclusion.
+    """
+    settings = settings or get_settings()
+    return settings.llm_backend.lower() not in TIGHT_CONTEXT_BACKENDS
+
+
 def required_api_key(settings: Settings | None = None) -> str | None:
     """Environment variable the configured backend reads, or None if it needs no key."""
     settings = settings or get_settings()
@@ -406,13 +426,18 @@ _MISSING_KEY_MARKERS = (
     "did not find api key",
 )
 _AUTH_MARKERS = ("invalid api key", "incorrect api key", "authenticationerror", "unauthorized")
+# Groq answers an over-budget single request with 413, not 429, and the body
+# says "Request too large ... on tokens per minute (TPM): Limit 8000,
+# Requested 8618". Waiting does not help: the request is too big for the
+# window at any moment, so this is a third thing, not a slow-down.
+_TOO_LARGE_MARKERS = ("request too large", "too large for model", "reduce your message size")
 
 
 def classify_provider_error(exc: BaseException) -> str:
     """What kind of provider failure this is: the thing a caller can act on.
 
-    Returns one of ``missing_key``, ``auth``, ``quota``, ``rate_limit``,
-    ``other``.
+    Returns one of ``missing_key``, ``auth``, ``too_large``, ``quota``,
+    ``rate_limit``, ``other``.
 
     The distinction that earns this function's existence is ``quota`` versus
     ``rate_limit``. Both arrive as HTTP 429. A per-minute cap clears by itself
@@ -435,7 +460,15 @@ def classify_provider_error(exc: BaseException) -> str:
     if status in (401, 403) or any(m in text for m in _AUTH_MARKERS):
         return "auth"
 
-    rate_limited = status == 429 or "ratelimit" in text or "rate limit" in text
+    if status == 413 or any(m in text for m in _TOO_LARGE_MARKERS):
+        return "too_large"
+
+    # "rate_limit_exceeded" is Groq's own error code and contains neither
+    # "ratelimit" nor "rate limit"; missing the underscored spelling is how a
+    # 413 reached a user as a raw JSON dump.
+    rate_limited = (
+        status == 429 or "ratelimit" in text or "rate limit" in text or "rate_limit" in text
+    )
     if rate_limited:
         return "quota" if any(m in text for m in _DAILY_MARKERS) else "rate_limit"
 

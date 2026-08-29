@@ -139,6 +139,14 @@ def failure_message(exc: BaseException, backend: str) -> str:
             "is never written to disk, and is not shared with anyone else using "
             "this page."
         )
+    if kind == "too_large":
+        return (
+            "**That question needed more context than the free tier allows in one "
+            f"request.** {name}'s free tier caps a single request, and comparing two "
+            "companies sends both filings at once. Ask about one company at a time -- "
+            '"What was Amazon\'s net income in 2023?", then the same for Apple -- or '
+            "put your own key in the sidebar if yours has a higher limit."
+        )
     if kind == "rate_limit":
         return (
             f"**{name} is rate-limiting this request.** This one clears on its "

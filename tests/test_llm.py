@@ -261,3 +261,52 @@ def test_an_unclassified_failure_still_shows_the_error():
     from finrag.presentation import failure_message
 
     assert "chroma exploded" in failure_message(ValueError("chroma exploded"), "groq")
+
+
+def test_an_over_budget_request_is_not_reported_as_a_rate_limit():
+    """Groq answers "request too large" with 413, not 429.
+
+    Two ways this reached a visitor as a raw JSON dump on the live demo: the
+    status is 413, and the body's error code is "rate_limit_exceeded", which
+    contains neither "ratelimit" nor "rate limit" -- only the underscored
+    spelling. The advice also differs from both neighbours: waiting does not
+    help, because the request is too big for the window at any moment.
+    """
+    from finrag.llm import classify_provider_error
+
+    too_large = _groq_error(
+        "APIStatusError",
+        413,
+        "Error code: 413 - {'error': {'message': 'Request too large for model "
+        "`openai/gpt-oss-120b` in organization `org_x` service tier `on_demand` on "
+        "tokens per minute (TPM): Limit 8000, Requested 8618, please reduce your "
+        "message size and try again.', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}",
+    )
+
+    assert classify_provider_error(too_large) == "too_large"
+
+
+def test_the_too_large_message_does_not_tell_the_visitor_to_wait():
+    """Waiting never fixes it, and the raw error advertises a paid upgrade."""
+    from finrag.presentation import failure_message
+
+    too_large = _groq_error(
+        "APIStatusError", 413, "Request too large for model, please reduce your message size"
+    )
+    text = failure_message(too_large, "groq")
+
+    assert "one company at a time" in text.lower()
+    assert "wait" not in text.lower()
+    assert "upgrade" not in text.lower(), "must not repeat the provider's upsell"
+
+
+def test_a_tight_context_backend_is_not_offered_multi_filing_questions():
+    """Suggesting a question the backend cannot answer reads as a broken system."""
+    from dataclasses import replace
+
+    from finrag.config import Settings
+    from finrag.llm import fits_multi_filing_question
+
+    base = Settings()
+    assert not fits_multi_filing_question(replace(base, llm_backend="groq"))
+    assert fits_multi_filing_question(replace(base, llm_backend="vertex"))

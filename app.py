@@ -35,7 +35,11 @@ from finrag.agent import answer_text  # noqa: E402
 from finrag.bootstrap import ensure_index  # noqa: E402
 from finrag.config import get_settings  # noqa: E402
 from finrag.ingest.download import list_filings  # noqa: E402
-from finrag.llm import default_model_for, required_api_key  # noqa: E402
+from finrag.llm import (  # noqa: E402
+    default_model_for,
+    fits_multi_filing_question,
+    required_api_key,
+)
 from finrag.presentation import (  # noqa: E402
     calculator_expression,
     describe_action,
@@ -274,12 +278,21 @@ def chat_history():
     return messages
 
 
+# One filing each. Deliberately: a two-company comparison sends both filings in
+# one request, which is ~8,600 tokens against Groq's free 8,000/minute, so it
+# fails every time it is offered. A suggested question that reliably fails is
+# worse than one fewer suggestion -- the visitor reads it as the system being
+# broken, and on the evidence in front of them they are right.
 EXAMPLES = [
     "What was Apple's total net sales in fiscal 2024?",
-    "Compare Apple and Amazon's net income in 2023",
+    "What was Amazon's net income in 2023?",
     "What is Microsoft's debt-to-equity ratio for 2023?",
     "What cybersecurity risks does JP Morgan disclose in 2023?",
 ]
+
+# Offered only where the context budget allows it -- Vertex has no such cap.
+if fits_multi_filing_question(settings):
+    EXAMPLES.insert(2, "Compare Apple and Amazon's net income in 2023")
 
 # An empty chat with only a placeholder does not say what the thing can do.
 # These disappear once a conversation starts rather than sitting under it.
