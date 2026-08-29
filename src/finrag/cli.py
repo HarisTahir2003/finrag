@@ -84,6 +84,10 @@ def main(argv: list[str] | None = None) -> int:
         "--reload", action="store_true", help="restart on code changes (development only)"
     )
     sub.add_parser("status", help="show configuration and index size")
+    sub.add_parser(
+        "warmup",
+        help="download the embedding and reranker models so first use is not a download",
+    )
 
     p_ask = sub.add_parser("ask", help="ask the agent a question")
     p_ask.add_argument("question")
@@ -171,6 +175,30 @@ def main(argv: list[str] | None = None) -> int:
             print(f"chunks indexed     {collection_size(settings)}")
         except Exception as exc:  # noqa: BLE001 - status must never fail hard
             print(f"chunks indexed     unavailable ({exc})")
+        return 0
+
+    if args.command == "warmup":
+        # Both models are fetched from HuggingFace the first time anything asks
+        # for them, which makes a container's first request slow and, worse,
+        # dependent on HuggingFace being reachable at that moment. Running this
+        # during a build resolves both.
+        from .embeddings import get_embeddings
+
+        print(f"embedding model  {settings.local_embedding_model}")
+        embeddings = get_embeddings(settings)
+        embeddings.embed_query("warm")
+        print("                 ready")
+
+        if settings.rerank:
+            from .rerank import get_reranker
+
+            print(f"reranker         {settings.rerank_model}")
+            model = get_reranker(settings)
+            if model is None:
+                print("                 unavailable -- reranking will degrade to retrieval order")
+            else:
+                model.predict([("warm", "up")])
+                print("                 ready")
         return 0
 
     if args.command == "serve":

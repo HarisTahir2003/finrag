@@ -1,0 +1,50 @@
+# Two services from one image: the HTTP API and the Streamlit UI.
+#
+#   docker compose up --build
+#
+# The index is mounted rather than baked. It is 134MB that changes whenever the
+# corpus is re-indexed, and rebuilding an image to pick up new filings is the
+# wrong shape for local work. A deployed image bakes it instead -- see Phase 4.
+
+services:
+  api:
+    build: .
+    image: finrag:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      # Read-only: serving never writes to the index, and saying so means a bug
+      # cannot corrupt the corpus.
+      - ./data:/app/data:ro
+    environment:
+      FINRAG_DATA_ROOT: /app/data
+      # Passed through from the host so no key is ever written into the image.
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      FINRAG_LLM_BACKEND: ${FINRAG_LLM_BACKEND:-groq}
+      FINRAG_RETRIEVAL_K: ${FINRAG_RETRIEVAL_K:-20}
+    restart: unless-stopped
+
+  # Independent of the API today: the UI talks to the agent directly, so it
+  # is deliberately not made to wait on the API's health. Wiring the two
+  # together is a Phase 4 decision, not an accident of compose.
+  ui:
+    build: .
+    image: finrag:latest
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data:ro
+    environment:
+      FINRAG_DATA_ROOT: /app/data
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      FINRAG_LLM_BACKEND: ${FINRAG_LLM_BACKEND:-groq}
+      FINRAG_RETRIEVAL_K: ${FINRAG_RETRIEVAL_K:-20}
+    command:
+      - streamlit
+      - run
+      - app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+      - --browser.gatherUsageStats=false
+    restart: unless-stopped

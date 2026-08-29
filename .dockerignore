@@ -1,0 +1,38 @@
+# The build context is 3.6GB without this, almost none of which belongs in an
+# image. Docker sends the whole context to the daemon before the first
+# instruction runs, so exclusions here are the difference between a build that
+# starts in a second and one that starts in a minute.
+
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# 1.2GB of raw EDGAR submissions. Needed to *build* an index, never to serve
+# one -- the index itself is mounted or copied separately.
+data/
+
+.git/
+.github/
+results/
+mlruns/
+mlflow.db
+.coverage
+htmlcov/
+
+# Secrets never belong in an image, and .env would be baked into a layer.
+.env
+.env.*
+!.env.example
+
+*.ipynb
+docs/
+tests/
+*.pdf
+.DS_Store
