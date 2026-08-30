@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -93,10 +94,19 @@ st.set_page_config(page_title="finrag — SEC filing analyst", page_icon="📈",
 # teaching each module about Streamlit keeps the package usable from the CLI,
 # the API and the tests. setdefault, so a real environment variable still wins
 # and a local .env is not overridden by a stale secrets file.
+#
+# Scalars, not just strings, and str()-ed on the way through. TOML parses an
+# unquoted `FINRAG_RERANK = false` as a boolean, and an `isinstance(_,str)`
+# filter dropped it silently -- so the single most important switch on the
+# deployment reverted to its default (rerank ON, ~1.1GB on a 690MB host, a
+# silent OOM) if the operator wrote the natural TOML instead of the quoted
+# form. str(False) -> "False" -> config lower-cases it to "false", which it
+# already handles. Nested tables (dict/list values) are still skipped: those
+# are not environment variables.
 try:
     for _name, _value in dict(st.secrets).items():
-        if isinstance(_value, str):
-            os.environ.setdefault(_name, _value)
+        if isinstance(_value, (str, bool, int, float)):
+            os.environ.setdefault(_name, str(_value))
 except Exception:  # noqa: BLE001 - no secrets file is the normal local case
     pass
 
@@ -122,6 +132,23 @@ def coverage() -> dict[str, list[int]]:
     from finrag.ingest.index import corpus_coverage
 
     return corpus_coverage(settings)
+
+
+def looks_like_api_key(value: str | None) -> bool:
+    """A cheap shape check: does this look like a real provider key at all?
+
+    Used only to decide whether the rate-limit waiver applies. A visitor with a
+    real key spends their own quota, so waiving the limit is right; but the
+    waiver keyed on "any non-empty string" let a scripted client type junk to
+    become exempt. A key is 20+ characters of the key alphabet (gsk_…, sk-…,
+    AIza…); "asdf" and "let me in" are not. This is not validation -- only the
+    provider can say if a key is real -- just enough that nonsense is rationed
+    like the no-key path instead of buying a free pass.
+    """
+    if not value:
+        return False
+    value = value.strip()
+    return len(value) >= 20 and bool(re.fullmatch(r"[A-Za-z0-9_.\-]+", value))
 
 
 # ----------------------------------------------------------------- sidebar
@@ -164,8 +191,16 @@ with st.sidebar:
         # visitor, so writing a key into the environment would hand it to the
         # next person to load the page. Theirs wins over the server's for them
         # alone.
+        #
+        # The else is not optional. Without it, emptying the box keeps the old
+        # key for the whole session -- so a visitor who pastes a truncated key,
+        # is told (correctly, by failure_message) to "leave the box empty to
+        # fall back to the server", clears it, and asks again, gets the same
+        # rejection with no way back short of a hard reload.
         if typed:
             st.session_state["api_key"] = typed
+        else:
+            st.session_state.pop("api_key", None)
         api_key = st.session_state.get("api_key") or os.environ.get(key_var, "")
 
     st.caption(f"Model: `{model_name}`")
@@ -211,7 +246,13 @@ def key_fingerprint(api_key: str) -> str:
     return hashlib.sha256(api_key.encode()).hexdigest()[:16]
 
 
-@st.cache_resource(show_spinner=False)
+# max_entries bounds the cache. The default is unbounded, and one entry -- an
+# AgentExecutor holding a ChatGroq with its own sync and async httpx pools and
+# a live TLS socket -- is created per distinct key fingerprint and never freed.
+# On a shared host that is a slow leak a scripted client can turn into an OOM by
+# pasting fresh strings; eight covers the server key plus a handful of
+# bring-your-own visitors, and ttl reclaims the rest.
+@st.cache_resource(show_spinner=False, max_entries=8, ttl=3600)
 def load_agent(fingerprint: str, _api_key: str | None = None):
     """Build the agent once per API key.
 
@@ -293,8 +334,22 @@ for message in st.session_state.messages:
             st.caption(f"{message['elapsed']:.0f}s · {settings.llm_backend} · {model_name}")
 
 
+# How many prior turns to carry. Six -- three exchanges -- is enough to resolve
+# "why was it higher?" against the question before it, which is the whole reason
+# history exists here.
+#
+# The cap is not a nicety. The agent resends its entire scratchpad on every LLM
+# round trip, and one search already spends ~2,700 real tokens against Groq's
+# 8,000-per-minute free tier. Unbounded history meant a two-search question
+# began failing with a 413 after ~8 turns and then failed *forever*, because
+# history only grows -- and the error told the visitor to "ask about one
+# company", which is not what was wrong. A fixed tail keeps the request size
+# flat no matter how long the conversation runs.
+MAX_HISTORY_TURNS = 6
+
+
 def chat_history():
-    """Prior turns as LangChain messages.
+    """The most recent turns as LangChain messages -- see MAX_HISTORY_TURNS.
 
     The agent's prompt has always carried a `chat_history` placeholder and the
     UI never filled it, so every question started from nothing: asking "explain
@@ -305,7 +360,7 @@ def chat_history():
     from langchain_core.messages import AIMessage, HumanMessage
 
     messages = []
-    for turn in st.session_state.messages:
+    for turn in st.session_state.messages[-MAX_HISTORY_TURNS:]:
         role = HumanMessage if turn["role"] == "user" else AIMessage
         messages.append(role(content=turn["content"]))
     return messages
@@ -350,8 +405,11 @@ if prompt:
 
         # A visitor's own key is their own budget; only the shared one is
         # rationed. Checked before any work is done, so a refused question
-        # costs nothing.
-        on_the_house = not st.session_state.get("api_key")
+        # costs nothing. The waiver requires a key that at least *looks* like a
+        # key -- otherwise typing any junk string bought exemption from the
+        # limits, and combined with the (now bounded) agent cache that was a
+        # free resource loop.
+        on_the_house = not looks_like_api_key(st.session_state.get("api_key"))
         verdict = spend_check(settings, session_id(), shared_key=on_the_house)
         if not verdict.allowed:
             st.warning(limit_message(verdict, settings))

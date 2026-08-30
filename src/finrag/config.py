@@ -133,6 +133,17 @@ class Settings:
         default_factory=lambda: int(_env("FINRAG_ANSWER_TIMEOUT_SECONDS", "120"))
     )
 
+    # Read timeout on a single provider HTTP call. Distinct from the answer
+    # timeout above, which bounds the whole agent run but is checked only
+    # between steps -- a call that hangs mid-request never yields, so that check
+    # never runs and the visitor watches a spinner forever. langchain passes an
+    # explicit None to the Groq SDK, which the SDK treats as "given" and so
+    # bypasses its own 60s default, leaving httpx with no read timeout at all.
+    # Setting it restores a bound and makes the answer-timeout check reachable.
+    request_timeout_seconds: int = field(
+        default_factory=lambda: int(_env("FINRAG_REQUEST_TIMEOUT_SECONDS", "60"))
+    )
+
     # Client-side retries per provider call. Six is deliberate and stays the
     # default: llm.MAX_RETRIES is applied uniformly so the backend comparison
     # ranks models rather than their client libraries' retry policies.

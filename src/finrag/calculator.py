@@ -67,8 +67,36 @@ _FUNCTIONS = {
 _CONSTANTS = {"pi": math.pi, "e": math.e}
 
 # Exponentiation is the one operator that can burn CPU without allocating, so
-# the exponent is bounded.
+# the exponent is bounded -- for the `**` operator and for pow() alike, since
+# a whitelisted pow() reaches the interpreter's builtin unchecked otherwise.
 MAX_EXPONENT = 128
+
+# A result this large is not a financial figure, it is an attempt to make the
+# process do work. 8192 bits is a ~2,466-digit integer -- astronomically past
+# any 10-K number, and the ceiling that stops chained exponentiation
+# (`(2**128)**128`...), where every individual exponent is under MAX_EXPONENT
+# but the running product is not. Floats saturate to inf on overflow (caught
+# below), so only integers need this.
+MAX_RESULT_BITS = 8192
+
+# Functions that legitimately take an iterable argument. Everywhere else a list
+# or tuple is a category error -- and, left evaluable, `[0] * 10**8` is a
+# 12-character request that allocates ~800MB and OOM-kills the container.
+_ITERABLE_FUNCTIONS = frozenset({"min", "max", "sum"})
+
+
+def _check_number(value: Any, where: str) -> Any:
+    """Every arithmetic operand must be a number, never a list.
+
+    `[0] * 5` is valid Python and returns a list; `list * int` is the shape the
+    allocation attack takes. Requiring numeric operands closes it directly,
+    independent of how the list was produced.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise CalculatorError(f"{where} must be a number, got {type(value).__name__}")
+    if isinstance(value, int) and value.bit_length() > MAX_RESULT_BITS:
+        raise CalculatorError("intermediate value is too large")
+    return value
 
 
 def _evaluate(node: ast.AST) -> Any:
@@ -85,16 +113,20 @@ def _evaluate(node: ast.AST) -> Any:
         op = _BIN_OPS.get(type(node.op))
         if op is None:
             raise CalculatorError(f"operator {type(node.op).__name__} is not allowed")
-        left, right = _evaluate(node.left), _evaluate(node.right)
+        left = _check_number(_evaluate(node.left), "left operand")
+        right = _check_number(_evaluate(node.right), "right operand")
         if isinstance(node.op, ast.Pow) and abs(right) > MAX_EXPONENT:
             raise CalculatorError(f"exponent {right} exceeds the limit of {MAX_EXPONENT}")
-        return op(left, right)
+        result = op(left, right)
+        if isinstance(result, int) and result.bit_length() > MAX_RESULT_BITS:
+            raise CalculatorError("result is too large")
+        return result
 
     if isinstance(node, ast.UnaryOp):
         op = _UNARY_OPS.get(type(node.op))
         if op is None:
             raise CalculatorError(f"unary {type(node.op).__name__} is not allowed")
-        return op(_evaluate(node.operand))
+        return op(_check_number(_evaluate(node.operand), "operand"))
 
     if isinstance(node, ast.Compare):
         result = _evaluate(node.left)
@@ -118,20 +150,44 @@ def _evaluate(node: ast.AST) -> Any:
             raise CalculatorError(f"function '{node.func.id}' is not allowed")
         if node.keywords:
             raise CalculatorError("keyword arguments are not allowed")
-        return fn(*[_evaluate(a) for a in node.args])
+
+        # pow() bypasses the `**` exponent guard otherwise -- pow(2, 4000) is
+        # inside the length limit and builds a 1,200-digit integer.
+        if node.func.id == "pow" and len(node.args) >= 2:
+            exponent = _evaluate(node.args[1])
+            if isinstance(exponent, (int, float)) and abs(exponent) > MAX_EXPONENT:
+                raise CalculatorError(f"exponent {exponent} exceeds the limit of {MAX_EXPONENT}")
+
+        args = [_evaluate_argument(a, node.func.id) for a in node.args]
+        result = fn(*args)
+        if isinstance(result, int) and result.bit_length() > MAX_RESULT_BITS:
+            raise CalculatorError("result is too large")
+        return result
 
     if isinstance(node, ast.Name):
         if node.id in _CONSTANTS:
             return _CONSTANTS[node.id]
         raise CalculatorError(f"unknown name '{node.id}'")
 
-    if isinstance(node, (ast.Tuple, ast.List)):
-        return [_evaluate(e) for e in node.elts]
-
     raise CalculatorError(f"{type(node).__name__} is not allowed in an expression")
 
 
-def calculate(expression: str) -> float:
+def _evaluate_argument(node: ast.AST, function_name: str) -> Any:
+    """A call argument, which may be a list/tuple only for min/max/sum.
+
+    A list is permitted here and nowhere else: `sum([1, 2, 3])` is legitimate,
+    while `[0] * 5` -- a list as an arithmetic operand -- is the allocation
+    attack. Keeping list construction out of `_evaluate` entirely means the only
+    way to make one is as a direct argument to a function that consumes it.
+    """
+    if isinstance(node, (ast.List, ast.Tuple)):
+        if function_name not in _ITERABLE_FUNCTIONS:
+            raise CalculatorError(f"'{function_name}' does not take a list argument")
+        return [_check_number(_evaluate(e), "list element") for e in node.elts]
+    return _evaluate(node)
+
+
+def calculate(expression: str) -> float | int | bool:
     """Evaluate a single arithmetic expression, or raise CalculatorError."""
     if not isinstance(expression, str) or not expression.strip():
         raise CalculatorError("expression is empty")
@@ -157,6 +213,14 @@ def calculate(expression: str) -> float:
         raise
     except ZeroDivisionError as exc:
         raise CalculatorError("division by zero") from exc
+    except RecursionError as exc:
+        # A deeply nested expression, e.g. thousands of parentheses.
+        raise CalculatorError("expression is too deeply nested") from exc
+    except MemoryError as exc:
+        # Belt and braces behind the magnitude guards: a computation that
+        # allocates must surface as a rejected expression, not an unhandled
+        # error that the tool wrapper does not catch and that kills the run.
+        raise CalculatorError("expression would allocate too much memory") from exc
     except (ValueError, OverflowError, TypeError) as exc:
         raise CalculatorError(str(exc)) from exc
 

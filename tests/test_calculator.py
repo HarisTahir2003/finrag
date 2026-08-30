@@ -62,6 +62,43 @@ def test_bounds_exponentiation():
         calculate("2 ** 999999")
 
 
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "[0] * 5",  # list * int returns a list; [0]*10**8 allocates ~800MB
+        "(0, 1) * 3",
+        "[0] * 100000",
+        "5 * [1]",  # the same, other operand order
+        "[1, 2, 3] + [4]",
+    ],
+)
+def test_a_list_cannot_be_an_arithmetic_operand(expression):
+    """`[0] * 10**8` is 12 characters and allocates ~800MB -- an OOM that takes
+    the whole shared container down. A list is a category error in arithmetic,
+    permitted only as a min/max/sum argument."""
+    with pytest.raises(CalculatorError):
+        calculate(expression)
+
+
+def test_pow_cannot_bypass_the_exponent_bound():
+    """pow(2, 4000) reached the builtin unchecked -- the `**` guard did not cover it."""
+    with pytest.raises(CalculatorError, match="exponent"):
+        calculate("pow(2, 4000)")
+
+
+def test_chained_exponentiation_is_bounded_by_result_size():
+    """Each exponent here is under the per-operator limit; the product is not."""
+    with pytest.raises(CalculatorError, match="too large"):
+        calculate("(((2 ** 128) ** 128) ** 128) ** 128")
+
+
+def test_lists_still_work_where_they_belong():
+    """The fix must not break the legitimate use -- summing retrieved figures."""
+    assert calculate("sum([167045, 101328, 66952])") == 335325
+    assert calculate("max([1, 2, 3])") == 3
+    assert calculate("min(1, 2, 3)") == 1
+
+
 def test_rejects_oversized_input():
     with pytest.raises(CalculatorError, match="characters"):
         calculate("1+" * 400 + "1")

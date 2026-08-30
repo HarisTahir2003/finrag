@@ -364,3 +364,28 @@ def test_the_stand_in_matches_the_real_groq_exceptions():
     # before it checks status.
     assert issubclass(groq.APIStatusError, groq.GroqError)
     assert not hasattr(groq.GroqError, "status_code")
+
+
+def test_the_groq_client_gets_a_real_read_timeout():
+    """A hung provider call must not hang the request forever.
+
+    langchain passes an explicit None timeout, which the Groq SDK treats as
+    "given" and so bypasses its own 60s default -- httpx then has no read
+    timeout at all. The answer-timeout deadline in app.py cannot save this,
+    because it is checked between agent steps and a hung call never yields one.
+    """
+    pytest.importorskip("langchain_groq")
+    monkey = pytest.MonkeyPatch()
+    monkey.setenv("GROQ_API_KEY", "gsk_dummy_for_construction_only")
+    try:
+        from finrag.config import Settings
+        from finrag.llm import get_chat_model
+
+        model = get_chat_model(Settings(llm_backend="groq", request_timeout_seconds=45))
+        # The value reaches the underlying httpx client, not just the wrapper.
+        assert model.request_timeout == 45
+        httpx_timeout = model.client._client.timeout
+        read = httpx_timeout.read if hasattr(httpx_timeout, "read") else httpx_timeout
+        assert read == 45, f"httpx read timeout is {read!r}, not the configured 45"
+    finally:
+        monkey.undo()

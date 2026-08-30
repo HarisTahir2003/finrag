@@ -238,6 +238,10 @@ def get_chat_model(settings: Settings | None = None, **overrides: Any) -> Any:
         except ImportError as exc:
             raise ImportError("The Groq backend needs: pip install 'finrag[groq]'") from exc
         params.setdefault("max_tokens", settings.max_output_tokens)
+        # Without this the SDK's own 60s default is bypassed (langchain passes an
+        # explicit None) and a hung call never returns. This is the deployed
+        # backend, so it is the one that matters.
+        params.setdefault("timeout", settings.request_timeout_seconds)
         return ChatGroq(model=model, **params)
 
     if backend == "vertex":
@@ -301,6 +305,9 @@ def _openai_compatible(backend: str, settings: Settings, **overrides: Any) -> An
         "temperature": 0,
         "max_tokens": settings.max_output_tokens,
         "max_retries": settings.max_retries,
+        # Same reasoning as the Groq branch: an explicit-None timeout disables
+        # httpx's read timeout, so a hung call hangs the request.
+        "timeout": settings.request_timeout_seconds,
         **overrides,
     }
     limiter = _rate_limiter(backend, settings)

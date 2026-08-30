@@ -526,3 +526,108 @@ def test_each_question_is_logged_with_an_id_that_ties_start_to_finish(monkeypatc
 
     assert field(starts[0].getMessage(), "id") == field(dones[0].getMessage(), "id")
     assert "elapsed" in dones[0].getMessage()
+
+
+# ------------------------------------------------- Phase-5-audit hardening
+
+
+def test_the_agent_cache_is_bounded():
+    """An unbounded st.cache_resource leaks one ChatGroq (sync+async httpx pools,
+    a live socket) per distinct key fingerprint, forever. A scripted client
+    pasting fresh strings turns that into an OOM on the shared host."""
+    import ast
+
+    node = _load_agent_def()
+    decorator = next(
+        (d for d in node.decorator_list if isinstance(d, ast.Call)),
+        None,
+    )
+    assert decorator is not None, "load_agent must keep its cache_resource decorator"
+    kwargs = {k.arg for k in decorator.keywords}
+    assert "max_entries" in kwargs, "the agent cache must be bounded (max_entries)"
+
+
+def test_chat_history_is_capped():
+    """Unbounded history is resent whole on every question, so it 413s Groq's
+    8,000 TPM after a handful of turns and then never recovers. A fixed tail
+    keeps the request size flat however long the conversation runs."""
+    import ast
+
+    source = Path(APP).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    fn = next(
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "chat_history"
+    )
+    # Somewhere in chat_history, session_state.messages must be sliced, not read whole.
+    sliced = any(
+        isinstance(n, ast.Subscript) and isinstance(n.slice, ast.Slice) for n in ast.walk(fn)
+    )
+    assert sliced, "chat_history() must slice st.session_state.messages, not send all of it"
+
+
+def _keyed_app(monkeypatch, agent, server_key="gsk_server_key_1234567890"):
+    """A stubbed app on a keyed backend, with a server key present."""
+    import streamlit as st
+
+    import finrag.agent
+    import finrag.ingest.index
+
+    monkeypatch.setenv("FINRAG_LLM_BACKEND", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", server_key)
+    monkeypatch.setattr(finrag.agent, "build_agent", lambda **kwargs: agent)
+    monkeypatch.setattr(finrag.ingest.index, "index_status", lambda *a, **k: (True, 12376, "ready"))
+    monkeypatch.setattr(finrag.ingest.index, "open_store", lambda *a, **k: object())
+    monkeypatch.setattr(
+        finrag.ingest.index, "corpus_coverage", lambda *a, **k: {"AAPL": [2023, 2024]}
+    )
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    return AppTest.from_file(APP, default_timeout=60)
+
+
+def test_clearing_the_key_box_falls_back_to_the_server_key(monkeypatch):
+    """The bug the failure message promised was fixed: emptying the box used to
+    keep the old key for the whole session, so a visitor who pasted a truncated
+    key and cleared it -- exactly as told -- stayed locked out."""
+
+    def stored_key(app):
+        # AppTest's session_state proxies attribute access, so `.get` is not a
+        # dict method there (SIM401's suggestion would raise) -- membership then
+        # index is the supported read.
+        if "api_key" in app.session_state:  # noqa: SIM401
+            return app.session_state["api_key"]
+        return None
+
+    at = _keyed_app(monkeypatch, _StubAgent())
+    at.run()
+
+    box = next(ti for ti in at.text_input if "api key" in ti.label.lower())
+    box.set_value("gsk_a_visitors_own_key_9999").run()
+    assert stored_key(at) == "gsk_a_visitors_own_key_9999"
+
+    # Clear it.
+    box = next(ti for ti in at.text_input if "api key" in ti.label.lower())
+    box.set_value("").run()
+    assert stored_key(at) in (None, ""), "the typed key was not withdrawn"
+
+
+def test_a_junk_key_does_not_buy_a_rate_limit_waiver(monkeypatch):
+    """The waiver keyed on 'any non-empty string', so typing junk exempted a
+    visitor from the limits. Only a key-shaped string should waive them."""
+    import finrag.ratelimit as rl
+    from finrag.ratelimit import RateLimiter
+
+    monkeypatch.setattr(rl, "limiter", RateLimiter())
+    monkeypatch.setenv("FINRAG_QUESTIONS_PER_SESSION", "2")
+    monkeypatch.setenv("FINRAG_QUESTIONS_PER_DAY", "99")
+
+    at = _keyed_app(monkeypatch, _StubAgent())
+    at.run()
+    at.session_state["api_key"] = "letmein"  # junk: short, would not be a real key
+
+    for _ in range(2):
+        at.chat_input[0].set_value("a question").run()
+        assert not at.warning, "junk-key visitor should be treated as shared-key"
+
+    at.chat_input[0].set_value("one too many").run()
+    assert at.warning, "a junk key must not exempt the visitor from the shared limit"
