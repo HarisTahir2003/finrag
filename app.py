@@ -284,6 +284,24 @@ def load_agent(fingerprint: str, _api_key: str | None = None):
 # ------------------------------------------------------------- provenance
 
 
+# An old answer's provenance is kept for scroll-back, not for re-reading the
+# whole filing. Bounding each stored observation keeps session_state and the
+# per-rerun payload flat as a conversation grows, while still showing the first
+# passages behind a historical answer.
+_HISTORY_OBSERVATION_CHARS = 2000
+
+
+def _trim_steps_for_history(steps: list[dict]) -> list[dict]:
+    """A copy of ``steps`` with each observation bounded for storage."""
+    trimmed = []
+    for step in steps:
+        observation = step["observation"]
+        if len(observation) > _HISTORY_OBSERVATION_CHARS:
+            observation = observation[:_HISTORY_OBSERVATION_CHARS] + "\n… (truncated)"
+        trimmed.append({**step, "observation": observation})
+    return trimmed
+
+
 def render_sources(steps: list[dict]) -> None:
     """Show what the answer was built from: passages retrieved, sums computed."""
     searches = [s for s in steps if s["tool"] == "search_10k_reports"]
@@ -504,6 +522,18 @@ if prompt:
             st.markdown(escape_dollars(answer))
             render_sources(steps)
             st.caption(f"{elapsed:.0f}s · {settings.llm_backend} · {model_name}")
+            # The just-rendered answer keeps its full provenance; the copy kept in
+            # session_state does not. Each observation is the whole ~8,000-char
+            # retrieval context, stored per step, and every historical turn is
+            # re-rendered and re-serialised to the browser on every rerun -- a
+            # 20-turn conversation would re-ship a third of a megabyte of passage
+            # text on each keystroke. The trimmed copy still shows the leading
+            # passages of an old answer, which is all a scroll-back needs.
             st.session_state.messages.append(
-                {"role": "assistant", "content": answer, "steps": steps, "elapsed": elapsed}
+                {
+                    "role": "assistant",
+                    "content": answer,
+                    "steps": _trim_steps_for_history(steps),
+                    "elapsed": elapsed,
+                }
             )

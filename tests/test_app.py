@@ -631,3 +631,31 @@ def test_a_junk_key_does_not_buy_a_rate_limit_waiver(monkeypatch):
 
     at.chat_input[0].set_value("one too many").run()
     assert at.warning, "a junk key must not exempt the visitor from the shared limit"
+
+
+def test_stored_history_observations_are_bounded(monkeypatch):
+    """The live answer keeps full provenance; the copy in session_state does not.
+    Each observation is the whole ~8,000-char retrieval context, re-serialised to
+    the browser on every rerun -- a long conversation would re-ship a third of a
+    megabyte per keystroke."""
+
+    class _LongAgent:
+        def stream(self, _inputs):
+            action = _Action(
+                "search_10k_reports",
+                {"ticker": "AAPL", "fiscal_year": 2024, "query": "net sales"},
+            )
+            big = "--- AAPL FY2024 ---\n\n[chunk 1]\n" + ("net sales 391035 " * 1000)
+            yield {"steps": [_Step(action, big)]}
+            yield {"output": "Apple's net sales were $391,035 million."}
+
+    at = _stubbed_app(monkeypatch, _LongAgent())
+    at.run()
+    at.chat_input[0].set_value("net sales?").run()
+
+    assert not at.exception
+    stored = at.session_state["messages"][-1]["steps"]
+    assert stored, "the answer should have recorded its step"
+    for step in stored:
+        assert len(step["observation"]) <= 2100, "the stored observation must be bounded"
+        assert "truncated" in step["observation"], "and marked as trimmed"

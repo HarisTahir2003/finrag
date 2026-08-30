@@ -18,12 +18,14 @@ class FakeStore:
         self._vector = vector_hits
         self._chunks = all_chunks or []
         self.queries: list[str] = []
+        self.get_calls = 0
 
     def similarity_search(self, query, k, filter):  # noqa: A002 - langchain's name
         self.queries.append(query)
         return self._vector[:k]
 
     def get(self, where, include):  # noqa: A002 - chroma's name
+        self.get_calls += 1
         return {
             "documents": [d.page_content for d in self._chunks],
             "metadatas": [d.metadata for d in self._chunks],
@@ -144,18 +146,49 @@ def test_fusion_needs_metadata_ids_to_merge_two_result_sets():
     assert ids[0] == "same-id", "and rank above one found by only a single retriever"
 
 
-def test_bm25_cache_key_notices_a_reindex():
-    """Chunk count is in the cache key so a re-index does not serve a stale index."""
+def test_bm25_cache_returns_a_hit_without_refetching_the_filing():
+    """A warm hit must not touch the store.
+
+    The old key included the chunk count, which could only be computed by
+    reading the whole filing back out of Chroma -- up to 723KB discarded on
+    every hit. Keying on (ticker, year) lets a hit return before any fetch.
+    """
     pytest.importorskip("rank_bm25")
     import finrag.retrieval as retrieval
 
     retrieval._BM25_CACHE.clear()
-    first = [_doc(f"c{i}", f"chunk {i}") for i in range(3)]
-    store = FakeStore(vector_hits=first, all_chunks=first)
-    retrieval._bm25_for_filing("AAPL", 2023, store)
-    assert len(retrieval._BM25_CACHE) == 1
+    chunks = [_doc(f"c{i}", f"chunk {i}") for i in range(3)]
+    store = FakeStore(vector_hits=chunks, all_chunks=chunks)
 
-    # Re-indexed: same filing, different chunking.
-    second = [_doc(f"d{i}", f"chunk {i}") for i in range(5)]
-    retrieval._bm25_for_filing("AAPL", 2023, FakeStore(vector_hits=second, all_chunks=second))
-    assert len(retrieval._BM25_CACHE) == 2, "a changed chunk count must not hit the cache"
+    retrieval._bm25_for_filing("AAPL", 2023, store)
+    assert store.get_calls == 1, "the first call builds the index and reads the filing once"
+
+    retrieval._bm25_for_filing("AAPL", 2023, store)
+    assert store.get_calls == 1, "a cache hit must not read the filing again"
+
+
+def test_bm25_cache_is_bounded_and_evicts_least_recently_used():
+    """Unbounded, the cache retained ~150-250MB across a full corpus, forever,
+    on a 690MB host. It is now an LRU."""
+    pytest.importorskip("rank_bm25")
+    import finrag.retrieval as retrieval
+
+    retrieval._BM25_CACHE.clear()
+    limit = retrieval._BM25_CACHE_MAX
+
+    # Fill past the limit; each filing is a distinct (ticker, year).
+    for year in range(2000, 2000 + limit + 3):
+        chunks = [
+            Document(
+                page_content=f"chunk {i}",
+                metadata={"id": f"{year}-{i}", "ticker": "AAPL", "year": year},
+            )
+            for i in range(3)
+        ]
+        retrieval._bm25_for_filing("AAPL", year, FakeStore(vector_hits=chunks, all_chunks=chunks))
+
+    assert len(retrieval._BM25_CACHE) == limit, "the cache must not grow past its bound"
+    # The earliest years were evicted; the most recent survive.
+    survivors = {year for _, year in retrieval._BM25_CACHE}
+    assert (2000 + limit + 2) in survivors, "the most recent filing must be retained"
+    assert 2000 not in survivors, "the least recently used filing must be evicted"

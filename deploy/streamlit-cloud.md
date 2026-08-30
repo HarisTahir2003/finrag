@@ -54,14 +54,23 @@ as an empty index rather than as a download error.
    FINRAG_RETRIEVAL_K = "20"
    FINRAG_RERANK = "false"
 
-   # Spending limits. The key above is shared by everyone who finds the URL.
+   # Spending limits. The key above is shared by everyone who finds the URL,
+   # and one answer costs several Groq requests, so the daily cap is set well
+   # below the 1,000-request free tier to leave room for retries: ~250 answers
+   # at ~3 requests each is ~750, with headroom. A visitor who wants more can
+   # enter their own key -- that spends their quota, not yours.
    FINRAG_QUESTIONS_PER_SESSION = "20"
-   FINRAG_QUESTIONS_PER_DAY = "300"
+   FINRAG_QUESTIONS_PER_DAY = "250"
 
-   # Each retry is another request against the daily quota, so one
-   # rate-limited question can cost seven. The default of 6 is right for the
-   # backend comparison and wrong here.
+   # Each retry is another request against the daily quota, so one rate-limited
+   # question can cost several. The default of 6 is right for the backend
+   # comparison and wrong here.
    FINRAG_MAX_RETRIES = "2"
+
+   # Pace client-side requests. The default of 4/min is ~34% over Groq's 8,000
+   # tokens-per-minute at real financial-chunk sizes; 3 keeps a two-search
+   # question inside one minute's budget.
+   FINRAG_RPM = "3"
    ```
 
    Secrets are not committed and are not visible to visitors. `app.py` copies

@@ -153,6 +153,16 @@ class Settings:
     # question can cost seven. Lower it there, not here.
     max_retries: int = field(default_factory=lambda: int(_env("FINRAG_MAX_RETRIES", "6")))
 
+    # Hard ceiling on tool calls per question. The agent resends its entire
+    # scratchpad on every LLM round, so worst-case tokens grow with the square
+    # of this number; 15 allowed ~334k tokens for one question on Groq (the 413
+    # was doing the bounding) and ~850k on an untrimmed backend. A real question
+    # is 1-2 searches plus maybe one calculation, so six is generous headroom
+    # while capping the runaway.
+    agent_max_iterations: int = field(
+        default_factory=lambda: int(_env("FINRAG_AGENT_MAX_ITERATIONS", "6"))
+    )
+
     max_context_tokens_raw: str = field(
         default_factory=lambda: _env("FINRAG_MAX_CONTEXT_TOKENS", "auto")
     )

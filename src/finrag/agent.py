@@ -141,6 +141,10 @@ def build_agent(
         tools=tools,
         verbose=verbose,
         handle_parsing_errors=True,
-        max_iterations=15,
+        max_iterations=settings.agent_max_iterations,
+        # Enforced *inside* the loop, between tool calls -- the coverage the
+        # UI's between-stream-chunks deadline cannot give, since a single hung
+        # provider call never yields a chunk. Bounds the whole question.
+        max_execution_time=settings.answer_timeout_seconds,
         return_intermediate_steps=True,
     )

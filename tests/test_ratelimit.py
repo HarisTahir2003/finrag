@@ -153,3 +153,36 @@ def test_the_wait_is_phrased_the_way_people_speak():
     assert Decision(False, retry_after=45).retry_after_human == "45 seconds"
     assert Decision(False, retry_after=900).retry_after_human == "15 minutes"
     assert Decision(False, retry_after=7200).retry_after_human == "2 hours"
+
+
+def test_expired_windows_are_reaped():
+    """Every session mints a new key, so without pruning the dict grows one dead
+    entry per visitor for the process's life."""
+    limiter = RateLimiter()
+    # Many short-lived session buckets.
+    for i in range(50):
+        limiter.check("session", f"visitor-{i}", limit=5, seconds=60)
+    assert len(limiter._windows) == 50
+
+    # Age them all past their window, then make one more call.
+    for window in limiter._windows.values():
+        window.started -= 61
+    limiter.check("session", "a-fresh-visitor", limit=5, seconds=60)
+
+    # The 50 expired buckets are gone; only the live one remains.
+    assert len(limiter._windows) == 1
+    assert "session:a-fresh-visitor" in limiter._windows
+
+
+def test_reaping_does_not_disturb_a_live_window():
+    """A window still inside its period must keep its count across a reap."""
+    limiter = RateLimiter()
+    for _ in range(3):
+        limiter.check("session", "steady", limit=5, seconds=60)
+    # A short-lived unrelated bucket that will expire.
+    limiter.check("session", "transient", limit=5, seconds=1)
+    limiter._windows["session:transient"].started -= 2
+
+    verdict = limiter.check("session", "steady", limit=5, seconds=60)
+    assert verdict.used == 4, "the live window kept its running count"
+    assert "session:transient" not in limiter._windows, "the expired one was reaped"

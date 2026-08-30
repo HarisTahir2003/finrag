@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from langchain_core.documents import Document
@@ -82,11 +83,23 @@ def reciprocal_rank_fusion(result_sets: list[list[Document]], k: int = 60) -> li
     return [seen[key] for key, _ in ranked]
 
 
-# One BM25 index per filing, keyed by (ticker, year, chunk count). Rebuilding it
-# on every query would mean re-tokenising a few hundred chunks each time; caching
-# it forever would serve a stale index after a re-index, which is why the chunk
-# count is part of the key -- a cheap way to notice the corpus moved underneath.
-_BM25_CACHE: dict[tuple[str, int, int], object] = {}
+# One BM25 index per filing, keyed by (ticker, year) and bounded as an LRU.
+#
+# Two properties matter, and the old (ticker, year, chunk_count) key had
+# neither. It never evicted -- a busy day that touched all 50 filings retained
+# ~150-250MB of tokenised indexes on a 690MB host, permanently -- and the chunk
+# count in the key forced a full store.get() of the filing's text on *every*
+# query just to compute it, discarding up to 723KB on a cache hit. Keying on
+# (ticker, year) lets a hit return before touching the store at all, and the
+# OrderedDict bounds the retained set.
+#
+# The chunk-count staleness guard is gone with it. An index re-written *within a
+# running process* is no longer noticed -- but the corpus is immutable for a
+# deployed container's lifetime (it is unpacked once at boot), and the CLI
+# re-indexes in a fresh process, so nothing in practice re-indexes behind a live
+# cache. A test can clear the cache explicitly.
+_BM25_CACHE_MAX = 6
+_BM25_CACHE: OrderedDict[tuple[str, int], object] = OrderedDict()
 
 
 def _bm25_for_filing(ticker: str, fiscal_year: int, store):
@@ -101,7 +114,14 @@ def _bm25_for_filing(ticker: str, fiscal_year: int, store):
     vector-only rather than failing -- the same shape as chunk_semantic's
     fallback.
     """
-    where = {"$and": [{"ticker": ticker.upper()}, {"year": int(fiscal_year)}]}
+    key = (ticker.upper(), int(fiscal_year))
+    cached = _BM25_CACHE.get(key)
+    if cached is not None:
+        _BM25_CACHE.move_to_end(key)  # most-recently-used
+        return cached
+
+    # Only on a miss do we read the filing out of the store.
+    where = {"$and": [{"ticker": key[0]}, {"year": key[1]}]}
     try:
         got = store.get(where=where, include=["documents", "metadatas"])
     except (AttributeError, TypeError):
@@ -117,10 +137,6 @@ def _bm25_for_filing(ticker: str, fiscal_year: int, store):
     texts = got.get("documents") or []
     if not texts:
         return None
-
-    key = (ticker.upper(), int(fiscal_year), len(texts))
-    if key in _BM25_CACHE:
-        return _BM25_CACHE[key]
 
     try:
         from langchain_community.retrievers import BM25Retriever
@@ -145,6 +161,9 @@ def _bm25_for_filing(ticker: str, fiscal_year: int, store):
         return None
 
     _BM25_CACHE[key] = retriever
+    _BM25_CACHE.move_to_end(key)
+    while len(_BM25_CACHE) > _BM25_CACHE_MAX:
+        _BM25_CACHE.popitem(last=False)  # evict least-recently-used
     return retriever
 
 

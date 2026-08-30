@@ -114,3 +114,20 @@ def test_a_dotenv_is_refused_even_if_something_stages_it(deploy, tmp_path):
 
     with pytest.raises(SystemExit):
         deploy.audit([secret], tmp_path)
+
+
+def test_the_deploy_doc_names_the_memory_and_spend_critical_settings():
+    """The live demo is configured by pasting this block into Streamlit's
+    secrets. If FINRAG_RERANK goes missing the app OOMs on a 690MB host; if the
+    rate limits go missing the shared free tier is drained in an afternoon. The
+    doc is the deployment contract, so hold it to it."""
+    doc = (ROOT / "deploy" / "streamlit-cloud.md").read_text(encoding="utf-8")
+    for var in (
+        "FINRAG_RERANK",
+        "FINRAG_QUESTIONS_PER_DAY",
+        "FINRAG_MAX_RETRIES",
+        "FINRAG_RPM",
+    ):
+        assert var in doc, f"the deploy doc no longer documents {var}"
+    # rerank must be documented off -- on is the OOM.
+    assert 'FINRAG_RERANK = "false"' in doc, "rerank must be documented as off"

@@ -105,6 +105,11 @@ class RateLimiter:
         now = time.monotonic()
         identity = f"{scope}:{key}"
         with self._lock:
+            # Every session mints a new key, so without pruning this dict grows
+            # one dead entry per visitor for the container's life. Reap the
+            # fully-elapsed windows while the lock is already held -- the work is
+            # bounded by how many happen to have expired, and each is ~150 bytes.
+            self._reap(now)
             window = self._windows.get(identity)
             if window is None or window.seconds != seconds or window.limit != limit:
                 # Reconfigured between calls -- start the window again rather
@@ -121,6 +126,16 @@ class RateLimiter:
             used=used,
             limit=limit,
         )
+
+    def _reap(self, now: float) -> None:
+        """Drop windows whose period has fully elapsed. Caller holds the lock."""
+        dead = [
+            identity
+            for identity, window in self._windows.items()
+            if now - window.started >= window.seconds
+        ]
+        for identity in dead:
+            del self._windows[identity]
 
     def reset(self) -> None:
         """Forget every counter. For tests, and for a deliberate operator reset."""
