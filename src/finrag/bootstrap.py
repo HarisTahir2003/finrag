@@ -17,13 +17,18 @@ the real index: 134MB -> 45MB, 2.4 seconds to unpack, done once per container.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import tarfile
+import threading
 from pathlib import Path
 
 from .config import Settings, get_settings
 
 log = logging.getLogger(__name__)
+
+# Serializes ensure_index across a process's threads -- see the function.
+_UNPACK_LOCK = threading.Lock()
 
 ARCHIVE_NAME = "chroma_local.tar.xz"
 
@@ -54,51 +59,62 @@ def ensure_index(settings: Settings | None = None, archive: Path | None = None) 
         log.debug("no index and no archive at %s; nothing to unpack", archive)
         return False
 
-    destination = index_dir.parent
-    destination.mkdir(parents=True, exist_ok=True)
-    log.info("unpacking %s into %s", archive.name, destination)
+    # Serialize unpacking within the process. Streamlit runs each browser
+    # session's script in its own thread, so on a cold container several reruns
+    # reach this at once. Without the lock they raced on a shared staging
+    # directory: one renamed the unpacked tree away while another was still
+    # extracting into it, and the loser then found chroma_local/ missing and
+    # crashed the app with "the archive was built from the wrong directory" --
+    # for an archive that is in fact correct. The first thread in unpacks; the
+    # rest re-check and return.
+    with _UNPACK_LOCK:
+        if index_dir.exists() and any(index_dir.iterdir()):
+            return False
 
-    # Unpack into a sibling and rename, rather than extracting in place.
-    #
-    # The guard above treats "the directory exists and is not empty" as "there
-    # is an index here", which a half-extracted directory satisfies. This runs
-    # inside a live web process on a host that serves every visitor from one
-    # container, so a second arrival during the ~2.4s extraction would find a
-    # partial index and use it -- reporting a chunk count that grows as the
-    # other thread works. Rename on the same filesystem is atomic, so the
-    # directory either is not there or is complete.
-    staging = destination / f".{index_dir.name}.unpacking"
-    if staging.exists():
-        shutil.rmtree(staging, ignore_errors=True)
-    staging.mkdir(parents=True)
+        destination = index_dir.parent
+        destination.mkdir(parents=True, exist_ok=True)
+        log.info("unpacking %s into %s", archive.name, destination)
 
-    try:
-        with tarfile.open(archive, "r:xz") as tar:
-            # filter="data" refuses absolute paths, parent-directory escapes,
-            # symlinks pointing outside the tree, and device nodes. Without it
-            # a tarball can write anywhere the process can, which is the whole
-            # CVE-2007-4559 family. Python 3.14 makes this the default; naming
-            # it keeps the behaviour identical on 3.10 through 3.13.
-            tar.extractall(staging, filter="data")
-
-        unpacked = staging / index_dir.name
-        if not unpacked.exists():
-            raise RuntimeError(
-                f"{archive.name} did not contain {index_dir.name}/ -- "
-                "the archive was built from the wrong directory"
-            )
+        # A staging directory unique to this attempt -- pid and thread id -- so
+        # two runs can never share or delete each other's, even if the lock is
+        # ever removed. Unpack into it and rename, rather than extracting in
+        # place: rename on one filesystem is atomic, so index_dir is either
+        # absent or complete, never the half-written state the guard above would
+        # mistake for a real index.
+        staging = destination / f".{index_dir.name}.unpacking.{os.getpid()}.{threading.get_ident()}"
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+        staging.mkdir(parents=True)
 
         try:
-            unpacked.rename(index_dir)
-        except OSError:
-            # Lost the race: another thread finished first. Its copy is
-            # complete, so there is nothing to do but drop ours.
-            if index_dir.exists() and any(index_dir.iterdir()):
-                log.info("another worker unpacked the index first; keeping theirs")
-                return False
-            raise
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
+            with tarfile.open(archive, "r:xz") as tar:
+                # filter="data" refuses absolute paths, parent-directory
+                # escapes, symlinks pointing outside the tree, and device nodes.
+                # Without it a tarball can write anywhere the process can, which
+                # is the whole CVE-2007-4559 family. Python 3.14 makes this the
+                # default; naming it keeps the behaviour identical on 3.10-3.13.
+                tar.extractall(staging, filter="data")
+
+            unpacked = staging / index_dir.name
+            if not unpacked.exists():
+                raise RuntimeError(
+                    f"{archive.name} did not contain {index_dir.name}/ -- "
+                    "the archive was built from the wrong directory"
+                )
+
+            try:
+                unpacked.rename(index_dir)
+            except OSError:
+                # The lock serializes threads within this process; a *second
+                # process* (the CLI, or multiple Docker workers) has no such
+                # guard, and renaming onto a directory another process already
+                # populated raises. Its copy is complete, so drop ours.
+                if index_dir.exists() and any(index_dir.iterdir()):
+                    log.info("another worker unpacked the index first; keeping theirs")
+                    return False
+                raise
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
 
     return True
 

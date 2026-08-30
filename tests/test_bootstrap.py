@@ -212,3 +212,49 @@ def test_losing_the_race_keeps_the_winners_index(tmp_path, monkeypatch):
 
     assert ensure_index(settings) is False
     assert (settings.index_dir / "chroma.sqlite3").read_text() == "theirs"
+
+
+def test_concurrent_unpacks_do_not_race(tmp_path):
+    """Streamlit runs each session's script in its own thread, so a cold
+    container reaches ensure_index from several threads at once. A shared
+    staging directory made them collide -- one renamed the tree away while
+    another was mid-extract, and the loser crashed with 'the archive was built
+    from the wrong directory' for a perfectly good archive. This is that."""
+    import threading
+
+    settings = _settings(tmp_path)
+    # A realistic archive: a directory with a couple of files, big enough that
+    # extraction is not instantaneous.
+    staging = tmp_path / "staging" / "chroma_local"
+    staging.mkdir(parents=True)
+    (staging / "chroma.sqlite3").write_text("x" * 200_000)
+    (staging / "segment").mkdir()
+    (staging / "segment" / "data_level0.bin").write_text("y" * 200_000)
+    archive = tmp_path / ARCHIVE_NAME
+    with tarfile.open(archive, "w:xz") as tar:
+        tar.add(staging, arcname="chroma_local")
+
+    results: list = []
+    errors: list = []
+    barrier = threading.Barrier(8)
+
+    def worker():
+        barrier.wait()  # release all threads together, maximising the overlap
+        try:
+            results.append(ensure_index(settings))
+        except Exception as exc:  # noqa: BLE001 - the whole point is that none escape
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f"a concurrent unpack raised: {errors}"
+    assert sum(1 for r in results if r is True) == 1, "exactly one thread should unpack"
+    # The index is complete and no staging directories were left behind.
+    assert (settings.index_dir / "chroma.sqlite3").read_text() == "x" * 200_000
+    assert (settings.index_dir / "segment" / "data_level0.bin").exists()
+    leftover = [p.name for p in tmp_path.iterdir() if ".unpacking" in p.name]
+    assert not leftover, f"staging directories survived: {leftover}"
